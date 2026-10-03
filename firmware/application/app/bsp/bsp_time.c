@@ -11,6 +11,8 @@ APP_TIMER_DEF(m_app_timer);
 autotimer bsptimers[TIMER_BSP_COUNT] = { 0 };
 // 定时器迭代位置
 static uint8_t g_timer_fori;
+static volatile uint32_t m_monotonic_ms;
+uint32_t bsp_monotonic_ms(void) { return m_monotonic_ms; }
 // 当前定时器运行状态
 static volatile enum {
     UNINIT,
@@ -34,14 +36,14 @@ autotimer* bsp_obtain_timer(uint32_t start_value) {
 			break;
         }
     }
-    return &bsptimers[i];
+    return i < TIMER_BSP_COUNT ? &bsptimers[i] : NULL;
 }
 
 /*
 * 设置定时器，该操作会操作目标定时器，修改当前值
 */
 inline uint8_t bsp_set_timer(autotimer* timer,uint32_t start_value) {
-    if(timer->busy == 0) return 0;
+    if(!timer || timer->busy == 0) return 0;
     timer->time = start_value;
     return 1;
 }
@@ -51,6 +53,7 @@ inline uint8_t bsp_set_timer(autotimer* timer,uint32_t start_value) {
 * 并且对定时器归零
 */
 inline void bsp_return_timer(autotimer* timer) {
+    if (!timer) return;
     timer->busy = 0;
     timer->time = 0;
 }
@@ -62,6 +65,7 @@ inline void bsp_return_timer(autotimer* timer) {
 void timer_app_callback(void *arg)
 {
     UNUSED_PARAMETER(arg);
+    m_monotonic_ms += 10;
     for (g_timer_fori = 0; g_timer_fori < TIMER_BSP_COUNT; g_timer_fori++) {
         if (bsptimers[g_timer_fori].busy == 1) {
             bsptimers[g_timer_fori].time += 10;

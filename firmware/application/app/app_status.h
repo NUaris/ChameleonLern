@@ -40,5 +40,8 @@
 #define     STATUS_DEVIEC_MODE_ERROR                (0x66)  // 当前设备所处的模式错误，无法调用对应的API
 #define     STATUS_INVALID_CMD                      (0x67)  // 无效的指令
 #define     STATUS_DEVICE_SUCCESS                   (0x68)  // 设备相关操作成功执行
+#define     STATUS_DEVICE_BUSY                       (0x6A)
+#define     STATUS_STORAGE_ERROR                     (0x6B)
+#define     STATUS_NO_CONTEXT                        (0x6C)
 #define     STATUS_NOT_IMPLEMENTED                  (0x69)  // 调用了某些未实现的操作，属于开发者遗漏的错误
 #endif

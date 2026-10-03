@@ -1,201 +1,108 @@
 #include "dataframe.h"
 #include "hex_utils.h"
+#include <string.h>
 
+#if defined(__GNUC__)
+#define QUEUE_BARRIER() __asm__ volatile("" ::: "memory")
+#else
+#define QUEUE_BARRIER() __schedule_barrier()
+#endif
+#define QUEUE_DEPTH 4
+#define FRAME_SIZE (DATA_FRAME_MAX_DATA + 10)
 
-#define NRF_LOG_MODULE_NAME data_frame
-#include "nrf_log.h"
-#include "nrf_log_ctrl.h"
-#include "nrf_log_default_backends.h"
-NRF_LOG_MODULE_REGISTER();
+typedef struct {
+    uint16_t cmd, status, length;
+    uint32_t generation;
+    uint8_t data[DATA_FRAME_MAX_DATA];
+} packet_t;
 
+typedef struct {
+    uint8_t bytes[FRAME_SIZE], checksum;
+    uint16_t position, payload;
+    uint32_t last_ms;
+    packet_t packets[QUEUE_DEPTH];
+    volatile uint8_t head, tail;
+    volatile uint32_t generation;
+} receiver_t;
 
-/*
- * *********************************************************************************************************************************
- *                          Variable length data frame format
- *                                  Designed by proxgrind
- *                                  Date: 20221205
- *
- *      0           1           2 3         45               6 7                    8                8 + n           8 + n + 1
- *  SOF(1byte)  LRC(1byte)  CMD(2byte)  Status(2byte)  Data Length(2byte)  Frame Head LRC(1byte)  Data(length)  Frame All LRC(1byte)
- *     0x11       0xEF        cmd(u16)    status(u16)      length(u16)              lrc(u8)          data(u8*)       lrc(u8)
- *
- *  The data length max is 512, frame length max is 1 + 1 + 2 + 2 + 2 + 1 + n + 1 = (10 + n)
- *  So, one frame will than 10 byte.
- * *********************************************************************************************************************************
- */
+/* Each channel has one producer: USB in the main loop, BLE in its IRQ callback. */
+static receiver_t receivers[2];
+static data_frame_cbk_t callback;
+static data_frame_channel_t active_channel;
+static uint8_t tx_bytes[FRAME_SIZE];
+static data_frame_tx_t tx = {.buffer = tx_bytes};
+static volatile uint32_t current_ms;
 
-#define DATA_PACK_TRANSMISSION_ON   0x11
-#define DATA_PACK_MAX_DATA_LENGTH   512
-#define DATA_PACK_BASE_LENGTH       10
+static void reset(receiver_t *r) { r->position = 0; r->checksum = 0; r->payload = 0; }
 
-#define DATA_LRC_CUT(val)   ((uint8_t)(0x100 - val))
+data_frame_tx_t *data_frame_make(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
+    if (length > DATA_FRAME_MAX_DATA || (length && !data)) return NULL;
+    tx_bytes[0] = 0x11; tx_bytes[1] = 0xef;
+    num_to_bytes(cmd, 2, tx_bytes + 2); num_to_bytes(status, 2, tx_bytes + 4);
+    num_to_bytes(length, 2, tx_bytes + 6);
+    uint8_t sum = 0;
+    for (unsigned i = 0; i < 8; i++) sum += tx_bytes[i];
+    tx_bytes[8] = (uint8_t)(0u - sum);
+    if (length) memcpy(tx_bytes + 9, data, length);
+    sum = 0;
+    for (unsigned i = 0; i < length; i++) sum += tx_bytes[9 + i];
+    tx_bytes[9 + length] = (uint8_t)(0u - sum); tx.length = length + 10;
+    return &tx;
+}
 
-
-static uint8_t m_data_rx_buffer[DATA_PACK_MAX_DATA_LENGTH + DATA_PACK_BASE_LENGTH];
-static uint8_t m_data_tx_buffer[DATA_PACK_MAX_DATA_LENGTH + DATA_PACK_BASE_LENGTH];
-static uint16_t m_data_rx_position = 0;
-static uint8_t m_data_rx_lrc = 0;
-static uint16_t m_data_cmd;
-static uint16_t m_data_status;
-static uint16_t m_data_len;
-static uint8_t *m_data_buffer;
-static volatile bool m_data_completed = false;
-static data_frame_cbk_t m_frame_process_cbk = NULL;
-static data_frame_tx_t m_frame_tx_buf_info = {
-    .buffer = m_data_tx_buffer,    // default buffer
-};
-
-
-/**
- * @brief 数据包创建，将创建之后的数据包放到缓冲区中，等待发送完毕之后设置非busy状态
- * @param cmd: 指令应答
- * @param status: 应答状态
- * @param length: 应答数据长度
- * @param data: 应答数据
- */
-data_frame_tx_t* data_frame_make(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
-    uint8_t lrc_tx = 0x00;
-    uint16_t i, j;
-    // sof
-    m_frame_tx_buf_info.buffer[0] = DATA_PACK_TRANSMISSION_ON;
-    // sof lrc
-    lrc_tx += m_frame_tx_buf_info.buffer[0];
-    m_frame_tx_buf_info.buffer[1] = DATA_LRC_CUT(lrc_tx);
-    lrc_tx += m_frame_tx_buf_info.buffer[1];
-    // cmd
-    num_to_bytes(cmd, 2, &m_frame_tx_buf_info.buffer[2]);
-    // status
-    num_to_bytes(status, 2, &m_frame_tx_buf_info.buffer[4]);
-    // length
-    num_to_bytes(length, 2, &m_frame_tx_buf_info.buffer[6]);
-    // head lrc
-    for (i = 2; i < 8; i++) {
-        lrc_tx += m_frame_tx_buf_info.buffer[i];
-    }
-    m_frame_tx_buf_info.buffer[8] = DATA_LRC_CUT(lrc_tx);
-    lrc_tx += m_frame_tx_buf_info.buffer[8];
-    // data
-    if (length > 0 && data != NULL) {
-        for (i = 9, j = 0; j < length; i++, j++) {
-            m_frame_tx_buf_info.buffer[i] = data[j];
-            lrc_tx += m_frame_tx_buf_info.buffer[i];
+void data_frame_receive_from(data_frame_channel_t channel, const uint8_t *data, uint16_t length) {
+    if (channel > DATA_FRAME_BLE || (!data && length)) return;
+    receiver_t *r = &receivers[channel];
+    for (unsigned i = 0; i < length; i++) {
+        uint8_t byte = data[i];
+        r->last_ms = current_ms;
+        if (!r->position && byte != 0x11) continue;
+        r->bytes[r->position] = byte;
+        r->checksum = (uint8_t)(r->checksum + byte);
+        if ((r->position == 1 || r->position == 8) && r->checksum) { reset(r); if (byte == 0x11) { r->bytes[0] = byte; r->checksum = byte; r->position = 1; } continue; }
+        if (r->position == 8) {
+            r->payload = (uint16_t)bytes_to_num(r->bytes + 6, 2);
+            if (r->payload > DATA_FRAME_MAX_DATA) { reset(r); continue; }
         }
-    }
-    // length out.
-    m_frame_tx_buf_info.length = (length + DATA_PACK_BASE_LENGTH);
-    // data all lrc
-    m_data_tx_buffer[m_frame_tx_buf_info.length - 1] = DATA_LRC_CUT(lrc_tx);;
-    return (&m_frame_tx_buf_info);
-}
-
-/**
- * @brief Data frame reset
- */
-void data_frame_reset(void) {
-    m_data_rx_position = 0;
-    m_data_rx_lrc = 0;
-}
-
-/**
- * @brief 数据包接收，用于接收发送过来的数据包并且进行拼接处理
- * @param data: 接收到的字节数组
- * @param length: 接收到的字节数组的长度
- */
-void data_frame_receive(uint8_t *data, uint16_t length) {
-    // buffer wait process
-    if (m_data_completed) {
-        NRF_LOG_ERROR("Data frame wait process.");
-        return;
-    }
-    // buffer overflow
-    if (m_data_rx_position + length >= sizeof(m_data_rx_buffer)) {
-        NRF_LOG_ERROR("Data frame wait overflow.");
-        data_frame_reset();
-        return;
-    }
-    // frame process
-    for (int i = 0; i < length; i++) {
-        // copy to buffer
-        m_data_rx_buffer[m_data_rx_position] = data[i];
-        if (m_data_rx_position < 2) {   // start of frame
-            if (m_data_rx_position == 0) {
-                if (m_data_rx_buffer[m_data_rx_position] != DATA_PACK_TRANSMISSION_ON) {
-                    // not sof byte
-                    NRF_LOG_ERROR("Data frame no sof byte.");
-                    data_frame_reset();
-                    return;
-                }
+        if (r->position >= 9 && r->position == r->payload + 9) {
+            uint8_t next = (uint8_t)((r->head + 1) % QUEUE_DEPTH);
+            if (!r->checksum && next != r->tail) {
+                packet_t *p = &r->packets[r->head];
+                p->generation = r->generation;
+                p->cmd = (uint16_t)bytes_to_num(r->bytes + 2, 2);
+                p->status = (uint16_t)bytes_to_num(r->bytes + 4, 2); p->length = r->payload;
+                memcpy(p->data, r->bytes + 9, p->length);
+                QUEUE_BARRIER();
+                r->head = next;
             }
-            if (m_data_rx_position == 1) {
-                if (m_data_rx_buffer[m_data_rx_position] != DATA_LRC_CUT(m_data_rx_lrc)) {
-                    // not sof lrc byte
-                    NRF_LOG_ERROR("Data frame sof lrc error.");
-                    data_frame_reset();
-                    return;
-                }
-            }
-        } else if (m_data_rx_position == 8) {  // frame head lrc
-            if (m_data_rx_buffer[m_data_rx_position] != DATA_LRC_CUT(m_data_rx_lrc)) {
-                // frame head lrc error 
-                NRF_LOG_ERROR("Data frame head lrc error.");
-                data_frame_reset();
-                return;
-            }
-            // frame head complete, cache info
-            m_data_cmd = bytes_to_num(&m_data_rx_buffer[2], 2);
-            m_data_status = bytes_to_num(&m_data_rx_buffer[4], 2);
-            m_data_len = bytes_to_num(&m_data_rx_buffer[6], 2);
-            NRF_LOG_ERROR("Data frame data length %d.", m_data_len);
-            // check data length
-            if (m_data_len > DATA_PACK_MAX_DATA_LENGTH) {
-                NRF_LOG_ERROR("Data frame data length too than of max.");
-                data_frame_reset();
-                return;
-            }
-        } else if (m_data_rx_position > 8) {   // frame data
-            // check all data ready.
-            if (m_data_rx_position == (8 + m_data_len + 1)) {
-                if (m_data_rx_buffer[m_data_rx_position] == DATA_LRC_CUT(m_data_rx_lrc)) {
-                    // ok, lrc for data is check success.
-                    // and we are receive completed
-                    m_data_buffer = m_data_len > 0 ? &m_data_rx_buffer[9] : NULL;
-                    m_data_completed = true;
-                } else {
-                    // data frame lrc error
-                    NRF_LOG_ERROR("Data frame finally lrc error.");
-                    data_frame_reset();
-                }
-                return;
-            }
+            reset(r); continue;
         }
-        // calculate lrc
-        m_data_rx_lrc += data[i];
-        // index update
-        m_data_rx_position++;
+        r->position++;
+        if (r->position >= FRAME_SIZE) reset(r);
     }
 }
 
-/**
- * @brief 数据包处理，当接收到的数据形成了一个完整的帧之后，
- *          将会通过此函数分发处理任务，此函数会回调通知数据处理者
- *          如果数据处理是耗时操作，则需要将此函数放在main循环中调用
- */
+void data_frame_reset_channel(data_frame_channel_t channel) {
+    if (channel > DATA_FRAME_BLE) return;
+    receiver_t *r = &receivers[channel];
+    reset(r); r->generation++;
+}
+
+void data_frame_receive(uint8_t *data, uint16_t length) { data_frame_receive_from(DATA_FRAME_USB, data, length); }
+void data_frame_tick(uint32_t now) {
+    current_ms = now;
+    for (unsigned i = 0; i < 2; i++) if (receivers[i].position && (uint32_t)(now - receivers[i].last_ms) > 2000) reset(&receivers[i]);
+}
+
+data_frame_channel_t data_frame_source(void) { return active_channel; }
 void data_frame_process(void) {
-    // check if data frame 
-    if (m_data_completed) {
-        // to process data frame
-        if (m_frame_process_cbk != NULL) {
-            m_frame_process_cbk(m_data_cmd, m_data_status, m_data_len, m_data_buffer);
-        }
-        // reset after process data frame.
-        data_frame_reset();
-        m_data_completed = false;
+    for (unsigned i = 0; i < 2; i++) {
+        receiver_t *r = &receivers[i]; if (r->head == r->tail) continue;
+        packet_t *p = &r->packets[r->tail]; active_channel = (data_frame_channel_t)i;
+        QUEUE_BARRIER();
+        if (callback && p->generation == r->generation) callback(p->cmd, p->status, p->length, p->length ? p->data : NULL);
+        QUEUE_BARRIER();
+        r->tail = (uint8_t)((r->tail + 1) % QUEUE_DEPTH);
     }
 }
-
-/**
- * @brief 数据包处理回调注册
- */
-void on_data_frame_complete(data_frame_cbk_t callback) {
-    m_frame_process_cbk = callback;
-}
+void on_data_frame_complete(data_frame_cbk_t cb) { callback = cb; }

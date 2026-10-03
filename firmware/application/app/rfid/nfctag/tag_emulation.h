@@ -12,7 +12,7 @@
 // u32 size align.
 #define ALIGN_U32  __attribute__((aligned(4)))
 
-extern bool g_is_tag_emulating;
+extern volatile bool g_is_tag_emulating;
 
 // 标签的数据缓冲区
 typedef struct {
@@ -69,7 +69,9 @@ typedef struct ALIGN_U32 {
 // 最基本的模拟卡初始化程序
 void tag_emulation_init(void);
 // 标签的一些存放在RAM中的数据可以通过此接口持久化保存到flash
-void tag_emulation_save(void);
+bool tag_emulation_save(void);
+bool tag_emulation_idle_pause(void);
+void tag_emulation_idle_resume(void);
 
 // 模拟卡的启动与结束
 void tag_emulation_sense_run(void);
@@ -82,16 +84,23 @@ void tag_emulation_delete_data(uint8_t slot, tag_sense_type_t sense_type);
 // 将指定卡槽初始化为指定类型的卡片的出厂数据
 bool tag_emulation_factory_data(uint8_t slot, tag_specific_type_t tag_type);
 // 更改正在模拟的卡片的类型
-void tag_emulation_change_type(uint8_t slot, tag_specific_type_t tag_type);
+bool tag_emulation_change_type(uint8_t slot, tag_specific_type_t tag_type);
 
 tag_sense_type_t get_sense_type_from_tag_type(tag_specific_type_t type);
 tag_data_buffer_t* get_buffer_by_tag_type(tag_specific_type_t type);
 
 void tag_emulation_set_slot(uint8_t index);
 uint8_t tag_emulation_get_slot(void);
-void tag_emulation_change_slot(uint8_t index, bool sense_disable);
+bool tag_emulation_change_slot(uint8_t index, bool sense_disable);
 bool get_tag_emulation_slot_enable(uint8_t slot);
 void set_tag_emulation_slot_enable(uint8_t slot, bool enable);
+
+void tag_emulation_load_data(void);
+bool tag_emulation_save_data(void);
+bool tag_emulation_slot_available(uint8_t slot);
+tag_specific_type_t tag_emulation_slot_type(uint8_t slot, tag_sense_type_t sense);
+bool tag_emulation_set_em410x(const uint8_t id[5]);
+bool tag_emulation_set_mf1_blocks(uint8_t first, uint8_t count, const uint8_t *data);
 
 // 在某个方向上查询任何一个使能的卡槽
 uint8_t find_next_tag_emulation_slot(uint8_t slot_now);

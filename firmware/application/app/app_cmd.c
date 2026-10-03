@@ -9,6 +9,7 @@
 #include "hex_utils.h"
 #include "data_cmd.h"
 #include "app_cmd.h"
+#include "selection.h"
 
 
 #define NRF_LOG_MODULE_NAME app_cmd
@@ -24,8 +25,11 @@ data_frame_tx_t* cmd_processor_get_version(uint16_t cmd, uint16_t status, uint16
 }
 
 data_frame_tx_t* cmd_processor_change_device_mode(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
-    if (length == 1) {
+    if (length == 1 && data[0] <= 1) {
+        if (selection_field_active()) return data_frame_make(cmd, STATUS_DEVICE_BUSY, 0, NULL);
         if (data[0] == 1) {
+            if (get_device_mode() == DEVICE_MODE_TAG && !tag_emulation_idle_pause())
+                return data_frame_make(cmd, STATUS_DEVICE_BUSY, 0, NULL);
             reader_mode_enter();
         } else {
             tag_mode_enter();
@@ -214,18 +218,7 @@ data_frame_tx_t* cmd_processor_write_em410x_2_t57(uint16_t cmd, uint16_t status,
 }
 
 data_frame_tx_t* cmd_processor_set_slot_activated(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
-    // 需要确保传过来的卡槽号码不要超过支持的上限
-    if (length == 1 && data[0] < TAG_MAX_SLOT_NUM) {
-        uint8_t slot = data[0];
-        device_mode_t mode = get_device_mode();
-        // 读卡器模式下不需要禁用模拟卡再进行切换
-        tag_emulation_change_slot(slot, mode != DEVICE_MODE_READER);
-        light_up_by_slot();
-        set_slot_ligth_color(0);
-		status = STATUS_DEVICE_SUCCESS;
-	} else {
-        status = STATUS_PAR_ERR;
-    }
+    status = length == 1 && selection_manual_slot(data[0]) ? STATUS_DEVICE_SUCCESS : STATUS_PAR_ERR;
     return data_frame_make(cmd, status, 0, NULL);
 }
 
@@ -237,8 +230,7 @@ data_frame_tx_t* cmd_processor_set_slot_tag_type(uint16_t cmd, uint16_t status, 
         // 获得当前使能的卡槽
         uint8_t slot_index_now = tag_emulation_get_slot();
         // 将当前的卡槽切换到指定的模拟卡类型
-        tag_emulation_change_type(slot_index_now, tag_type);
-		status = STATUS_DEVICE_SUCCESS;
+        status = tag_emulation_change_type(slot_index_now, tag_type) ? STATUS_DEVICE_SUCCESS : STATUS_DEVICE_BUSY;
 	} else {
         status = STATUS_PAR_ERR;
     }
@@ -251,7 +243,8 @@ data_frame_tx_t* cmd_processor_set_slot_data_default(uint16_t cmd, uint16_t stat
         uint8_t target_init_slot_num = data[0];    // 获得要操作的卡槽
         tag_specific_type_t tag_type = data[1];    // 取出上位机传过来的标签类型
         // 重置当前的卡槽为缺省数据，如果失败，则可能是并未实现此API的缺省
-        status = tag_emulation_factory_data(target_init_slot_num, tag_type) ? STATUS_DEVICE_SUCCESS : STATUS_NOT_IMPLEMENTED;
+        status = selection_field_active() ? STATUS_DEVICE_BUSY :
+            tag_emulation_factory_data(target_init_slot_num, tag_type) ? STATUS_DEVICE_SUCCESS : STATUS_STORAGE_ERROR;
 	} else {
         status = STATUS_PAR_ERR;
     }
@@ -286,7 +279,53 @@ data_frame_tx_t* after_reader_run(uint16_t cmd, uint16_t status, uint16_t length
  * (cmd -> process) function map, the map struct is:
  *            cmd code                        before process               cmd processor                                after process
  */
+
+static data_frame_tx_t *cmd_learning(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
+    static uint8_t output[DATA_FRAME_MAX_DATA];
+    uint16_t size;
+    status = selection_command(cmd, data, length, output, &size);
+    return data_frame_make(cmd, status, size, output);
+}
+
+static data_frame_tx_t *cmd_card_data(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
+    if (selection_field_active()) return data_frame_make(cmd, STATUS_DEVICE_BUSY, 0, NULL);
+    if (get_device_mode() != DEVICE_MODE_READER) return data_frame_make(cmd, STATUS_DEVIEC_MODE_ERROR, 0, NULL);
+    status = STATUS_PAR_ERR;
+    if (cmd == DATA_CMD_SET_EM410X_DATA && length == 5)
+        status = tag_emulation_set_em410x(data) ? STATUS_DEVICE_SUCCESS : STATUS_STORAGE_ERROR;
+    else if (cmd == DATA_CMD_SET_MF1_DATA && length >= 18 && data[1] && length == 2u + 16u * data[1])
+        status = tag_emulation_set_mf1_blocks(data[0], data[1], data + 2) ? STATUS_DEVICE_SUCCESS : STATUS_PAR_ERR;
+    return data_frame_make(cmd, status, 0, NULL);
+}
+
+static data_frame_tx_t *cmd_slots(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
+    uint8_t slots[25]; slots[0] = tag_emulation_get_slot();
+    if (length) return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
+    for (uint8_t i = 0; i < TAG_MAX_SLOT_NUM; i++) {
+        slots[1 + i*3] = get_tag_emulation_slot_enable(i);
+        slots[2 + i*3] = tag_emulation_slot_type(i, TAG_SENSE_HF);
+        slots[3 + i*3] = tag_emulation_slot_type(i, TAG_SENSE_LF);
+    }
+    return data_frame_make(cmd, STATUS_DEVICE_SUCCESS, sizeof(slots), slots);
+}
+
+static data_frame_tx_t *before_lf_reader(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
+    return get_device_mode() == DEVICE_MODE_READER ? NULL : data_frame_make(cmd, STATUS_DEVIEC_MODE_ERROR, 0, NULL);
+}
+
 static cmd_data_map_t m_data_cmd_map[] = {
+    {DATA_CMD_SELECTION_STATUS, NULL, cmd_learning, NULL},
+    {DATA_CMD_SELECTION_CONFIG_SET, NULL, cmd_learning, NULL},
+    {DATA_CMD_SELECTION_TIME_SYNC, NULL, cmd_learning, NULL},
+    {DATA_CMD_SELECTION_TRAIN, NULL, cmd_learning, NULL},
+    {DATA_CMD_SELECTION_FORGET, NULL, cmd_learning, NULL},
+    {DATA_CMD_SELECTION_PREDICT, NULL, cmd_learning, NULL},
+    {DATA_CMD_SELECTION_SAMPLES, NULL, cmd_learning, NULL},
+    {DATA_CMD_SELECTION_SAVE, NULL, cmd_learning, NULL},
+    {DATA_CMD_SELECTION_CONFIG_GET, NULL, cmd_learning, NULL},
+    {DATA_CMD_SET_EM410X_DATA, NULL, cmd_card_data, NULL},
+    {DATA_CMD_SET_MF1_DATA, NULL, cmd_card_data, NULL},
+    {DATA_CMD_GET_SLOT_INFO, NULL, cmd_slots, NULL},
     {    DATA_CMD_GET_APP_VERSION,            NULL,                        cmd_processor_get_version,                   NULL                },
     {    DATA_CMD_CHANGE_DEVICE_MODE,         NULL,                        cmd_processor_change_device_mode,            NULL                },
     {    DATA_CMD_GET_DEVICE_MODE,            NULL,                        cmd_processor_get_device_mode,               NULL                },
@@ -304,8 +343,8 @@ static cmd_data_map_t m_data_cmd_map[] = {
     {    DATA_CMD_MF1_READ_ONE_BLOCK,         before_reader_run,           cmd_processor_mf1_read_one_block,            after_reader_run    },
     {    DATA_CMD_MF1_WRITE_ONE_BLOCK,        before_reader_run,           cmd_processor_mf1_write_one_block,           after_reader_run    },
 
-    {    DATA_CMD_SCAN_EM410X_TAG,            NULL,                        cmd_processor_em410x_scan,                   NULL                },
-    {    DATA_CMD_WRITE_EM410X_TO_T5577,      NULL,                        cmd_processor_write_em410x_2_t57,            NULL                },
+    {    DATA_CMD_SCAN_EM410X_TAG,            before_lf_reader,                        cmd_processor_em410x_scan,                   NULL                },
+    {    DATA_CMD_WRITE_EM410X_TO_T5577,      before_lf_reader,                        cmd_processor_write_em410x_2_t57,            NULL                },
     
     {    DATA_CMD_SET_SLOT_ACTIVATED,         NULL,                        cmd_processor_set_slot_activated,            NULL                },
     {    DATA_CMD_SET_SLOT_TAG_TYPE,          NULL,                        cmd_processor_set_slot_tag_type,             NULL                },
@@ -321,7 +360,7 @@ void on_data_frame_received(uint16_t cmd, uint16_t status, uint16_t length, uint
     bool is_cmd_support = false;
     // print info
     NRF_LOG_INFO("Data frame: cmd = %02x, status = %02x, length = %d", cmd, status, length);
-    NRF_LOG_HEXDUMP_INFO(data, length);
+
     for (int i = 0; i < ARRAY_SIZE(m_data_cmd_map); i++) {
         if (m_data_cmd_map[i].cmd == cmd) {
             is_cmd_support = true;
@@ -348,12 +387,14 @@ void on_data_frame_received(uint16_t cmd, uint16_t status, uint16_t length, uint
     if (is_cmd_support) {
         // check and response
         if (response != NULL) {
-            usb_cdc_write(response->buffer, response->length);
+            if (data_frame_source() == DATA_FRAME_BLE) ble_command_write(response->buffer, response->length);
+            else usb_cdc_write(response->buffer, response->length);
         }
     } else {
         // response cmd unsupport.
         response = data_frame_make(cmd, STATUS_INVALID_CMD, 0, NULL);
-        usb_cdc_write(response->buffer, response->length);
+        if (data_frame_source() == DATA_FRAME_BLE) ble_command_write(response->buffer, response->length);
+            else usb_cdc_write(response->buffer, response->length);
         NRF_LOG_INFO("Data frame cmd invalid: %d,", cmd);
     }
 }

@@ -6,6 +6,7 @@
 #include "crypto1_helper.h"
 #include "fds_util.h"
 #include "tag_persistence.h"
+#include "selection.h"
 
 #define NRF_LOG_MODULE_NAME tag_mf1
 #include "nrf_log.h"
@@ -266,7 +267,12 @@ static struct Crypto1State *pcs = &mpcs;
 // 定义指向存放侦测的数据的buffer
 // 将此数据放置在休眠保留的RAM中，以节约写入到Flash的时间和空间
 #define MF1_AUTH_LOG_MAX_SIZE   1000
-static __attribute__((at(0x20038000))) struct nfc_tag_mf1_auth_log_buffer {
+#if defined(__CC_ARM)
+#define AUTH_LOG_LOCATION __attribute__((at(0x20038000)))
+#else
+#define AUTH_LOG_LOCATION __attribute__((section(".retained"), aligned(4)))
+#endif
+static AUTH_LOG_LOCATION struct nfc_tag_mf1_auth_log_buffer {
     uint32_t count;
     nfc_tag_mf1_auth_log_t logs[MF1_AUTH_LOG_MAX_SIZE];
 } m_auth_log;
@@ -385,12 +391,12 @@ void nfc_tag_mf1_random_nonce(uint8_t nonce[4]) {
  */
 void append_mf1_auth_log_step1(bool isKeyB, bool isNested, uint8_t block, uint8_t *nonce) {
     // 首次上电，重置一下缓冲区信息
-    if (m_auth_log.count == 0xFFFFFFFF) {
+    if (m_auth_log.count > MF1_AUTH_LOG_MAX_SIZE) {
         m_auth_log.count = 0;
         NRF_LOG_INFO("Mifare Classic auth log buffer ready");
     }
     // 非首次上电，看一下是否记录侦测日志超过大小上限
-    if (m_auth_log.count > MF1_AUTH_LOG_MAX_SIZE) {
+    if (m_auth_log.count >= MF1_AUTH_LOG_MAX_SIZE) {
         // 超过上限直接跳过此操作。
         NRF_LOG_INFO("Mifare Classic auth log buffer overflow");
         return;
@@ -409,7 +415,7 @@ void append_mf1_auth_log_step1(bool isKeyB, bool isNested, uint8_t block, uint8_
  */
 void append_mf1_auth_log_step2(uint8_t *nr, uint8_t *ar) {
     // 判断到超过上限直接跳过此操作，避免覆盖之前的记录
-    if (m_auth_log.count > MF1_AUTH_LOG_MAX_SIZE) {
+    if (m_auth_log.count >= MF1_AUTH_LOG_MAX_SIZE) {
         return;
     }
     
@@ -505,6 +511,7 @@ void nfc_tag_mf1_state_handler(uint8_t* p_data, uint16_t szDataBits) {
                     switch(p_data[0]) {
                         case CMD_AUTH_A:
                         case CMD_AUTH_B: {
+                            selection_reader_command(p_data[0] == CMD_AUTH_A ? 4 : 5, p_data[1]);
                             uint8_t BlockAuth = p_data[1];
                             uint8_t CardNonce[4];
                             uint8_t BlockStart;
@@ -776,6 +783,7 @@ void nfc_tag_mf1_state_handler(uint8_t* p_data, uint16_t szDataBits) {
                         case CMD_AUTH_A:
                         case CMD_AUTH_B: {
                             // 在已经加密过的情况下发起第二次验证请求，则是嵌套验证的过程
+                            selection_reader_command(p_data[0] == CMD_AUTH_A ? 4 : 5, p_data[1]);
                             uint8_t BlockAuth = p_data[1];
                             uint8_t CardNonce[4];
                             uint8_t BlockStart;
@@ -1008,7 +1016,7 @@ void nfc_tag_mf1_reset_handler() {
  */
 int get_information_size_by_tag_type(tag_specific_type_t type, bool auth_align) {
     int size_raw = sizeof(nfc_tag_14a_coll_res_entity_t) + sizeof(nfc_tag_mf1_configure_t) + (get_block_max_by_tag_type(type) * 16);
-    int size_align = size_raw + (size_raw % 4);
+    int size_align = (size_raw + 3) & ~3;
     return auth_align ? size_align : size_raw;
 }
 
@@ -1035,6 +1043,12 @@ int nfc_tag_mf1_data_savecb(tag_specific_type_t type, tag_data_buffer_t* buffer)
  * @param buffer    数据缓冲区
  */
 int nfc_tag_mf1_data_loadcb(tag_specific_type_t type, tag_data_buffer_t* buffer) {
+    if (!buffer || type == TAG_TYPE_UNKNOWN) {
+        m_tag_type = TAG_TYPE_UNKNOWN;
+        m_tag_information = NULL;
+        nfc_tag_14a_set_handler(NULL);
+        return 0;
+    }
     // 确保外部容量足够转换为信息结构体
     int info_size = get_information_size_by_tag_type(type, false);
     if (buffer->length >= info_size) {
@@ -1063,7 +1077,7 @@ bool nfc_tag_mf1_data_factory(uint8_t slot, tag_specific_type_t tag_type) {
     uint8_t default_data[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
     uint8_t default_trail[] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x07, 0x80, 0x69, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
     // default mf1 info
-    nfc_tag_mf1_information_t mf1_tmp_information;
+    nfc_tag_mf1_information_t mf1_tmp_information = {0};
     nfc_tag_mf1_information_t *p_mf1_information;
     p_mf1_information = &mf1_tmp_information;
     int block_max = get_block_max_by_tag_type(tag_type);
@@ -1102,3 +1116,5 @@ bool nfc_tag_mf1_data_factory(uint8_t slot, tag_specific_type_t tag_type) {
     }
     return ret;
 }
+
+uint16_t nfc_tag_mf1_block_count(tag_specific_type_t type) { return (uint16_t)get_block_max_by_tag_type(type); }

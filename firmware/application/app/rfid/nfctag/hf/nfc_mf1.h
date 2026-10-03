@@ -75,6 +75,9 @@ typedef struct __attribute__((aligned(4))) {
     uint8_t memory[256][16];
 } nfc_tag_mf1_information_t;
 
+int get_information_size_by_tag_type(tag_specific_type_t type, bool auth_align);
+uint16_t nfc_tag_mf1_block_count(tag_specific_type_t type);
+
 // 4Byte卡片的出厂固化的0块结构
 typedef struct {
     // 例如：

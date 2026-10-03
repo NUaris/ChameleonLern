@@ -33,12 +33,13 @@ NRF_LOG_MODULE_REGISTER();
 #include "dataframe.h"
 #include "hex_utils.h"
 #include "app_cmd.h"
+#include "selection.h"
 
 
 // 定义软定时器
 APP_TIMER_DEF(m_button_check_timer);    // 用于按钮防抖的定时器
-static bool m_is_read_btn_press = false;
-static bool m_is_write_btn_press = false;
+static volatile bool m_is_read_btn_press = false;
+static volatile bool m_is_write_btn_press = false;
 
 
 /**@brief Function for assert macro callback.
@@ -202,6 +203,10 @@ static void button_init(void) {
 /**@brief 进入深度休眠的实现函数
  */
 static void system_off_enter(void) {
+    if (selection_field_active() || !tag_emulation_save() || !selection_save()) {
+        sleep_timer_start(2000);
+        return;
+    }
     
     // 先禁用掉HF NFC的事件
     NRF_NFCT->INTENCLR = NRF_NFCT_DISABLE_ALL_INT;
@@ -244,7 +249,7 @@ static void system_off_enter(void) {
     bsp_delay_ms(50);
     
     // 然后把卡槽配置等数据进行保存
-    tag_emulation_save();
+    // State was saved before reconfiguring GPIO above.
     
     // 然后进行休眠
     NRF_LOG_INFO("Sleep finally, Bye ^.^");
@@ -350,9 +355,7 @@ static void button_press_process(void) {
         
         // 仅在新卡槽切换有效的情况下更新状态
         if (slot_new != slot_now) {
-            tag_emulation_change_slot(slot_new, true);  // 告诉模拟卡模块我们需要切换卡槽
-            light_up_by_slot();                         // 切换了卡槽，我们需要重新亮灯
-            set_slot_ligth_color(0);                    // 然后重新切换灯的颜色
+            (void)selection_manual_slot(slot_new);
         }
         
         // 重新延迟进入休眠
@@ -392,7 +395,7 @@ int main(void)
     log_init();                         // 日志初始化
     gpio_te_init();                     // 初始化GPIO矩阵库
     app_timers_init();                  // 初始化软定时器
-    fds_util_init();                    // 初始化fds工具封装
+    // 初始化fds工具封装
     bsp_timer_init();                   // 初始化超时定时器
     bsp_timer_start();                  // 启动BSP TIMER，准备用于处理业务逻辑
     button_init();                      // 按钮初始化
@@ -402,10 +405,12 @@ int main(void)
     rng_drv_and_srand_init();           // 随机数生成器初始化
     power_management_init();            // 电源管理初始化
     ble_slave_init();                   // 蓝牙协议栈初始化
+    fds_util_init();                    // Flash callbacks require the running SoftDevice.
     check_wakeup_src();                 // 检测唤醒源，根据唤醒源决定BLE广播与后续休眠动作
 
     tag_emulation_init();               // 模拟卡初始化
     light_up_by_slot();                 // 根据当前配置启用的卡槽亮起对应的灯
+    selection_init();                  // Load the versioned learning model.
     tag_mode_enter();                   // 默认进入卡模拟模式
     
     // cmd callback register
@@ -416,6 +421,12 @@ int main(void)
     while(1) {
         // Button event process
         button_press_process();
+        CRITICAL_REGION_ENTER();
+        data_frame_tick(bsp_monotonic_ms());
+        CRITICAL_REGION_EXIT();
+        selection_process();
+        usb_cdc_process();
+        ble_command_process();
         // Data pack process
         data_frame_process();
         // Log print process

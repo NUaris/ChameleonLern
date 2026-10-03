@@ -1,129 +1,121 @@
 # ChameleonLern
 
-ChameleonLern 是由 [NUaris](https://github.com/NUaris) 维护的个人固件二次开发项目，基于官方 [ChameleonUltra](https://github.com/RfidResearchGroup/ChameleonUltra) 的历史代码进行个人修改和扩展。
+[![Firmware CI](https://github.com/NUaris/ChameleonLern/actions/workflows/ci.yml/badge.svg)](https://github.com/NUaris/ChameleonLern/actions/workflows/ci.yml)
 
-项目目标是结合周边蓝牙环境、读卡器交互特征、时间和个人使用习惯，学习不同场景对应的卡片，并自动选择合适的模拟卡槽。
+ChameleonLern 是 [NUaris](https://github.com/NUaris) 基于官方 [ChameleonUltra](https://github.com/RfidResearchGroup/ChameleonUltra) 历史代码进行个人二次修改的固件项目。目标是结合周边蓝牙环境、读卡器交互特征、时间和个人选择，学习场景与卡槽的关系，自动选择将要使用的卡。
 
-**目前仓库处于基础固件阶段，混合特征学习与自动选卡尚未实现。** 下文分别列出已有代码和后续计划，不将计划功能视为已可用功能。
+**已实现第一版设备端混合学习与自动选卡，已通过主机测试和 nRF52840 GCC 编译；尚未完成实体设备验收。** 默认关闭自动选卡，建议先使用观察模式收集反馈。评分表示特征相似程度，不能当作准确率或开门成功率。
 
 ## 官方来源与维护方式
 
-本项目的起始代码来自官方 ChameleonUltra 仓库的历史提交：
+起始代码来自官方 ChameleonUltra 的历史提交 [`d866e6f9626a57c4099e29d4bcda11781f0433a9`](https://github.com/RfidResearchGroup/ChameleonUltra/commit/d866e6f9626a57c4099e29d4bcda11781f0433a9)（`project merge`），官方代码、设计及第三方组件的贡献属于原团队与各自作者。
 
-- 官方仓库：[RfidResearchGroup/ChameleonUltra](https://github.com/RfidResearchGroup/ChameleonUltra)。
-- 起始提交：[`d866e6f9626a57c4099e29d4bcda11781f0433a9`](https://github.com/RfidResearchGroup/ChameleonUltra/commit/d866e6f9626a57c4099e29d4bcda11781f0433a9)，提交说明为 `project merge`。
-- 个人二次开发仓库：[NUaris/ChameleonLern](https://github.com/NUaris/ChameleonLern)。
+本项目由个人维护，以自己的混合学习与自动选卡目标推进，不跟随官方发布节奏，不自动同步官方分支或全量合并官方功能。后续会持续参考官方的实现和问题反馈；**官方发现或修复、且适用于本项目的 bug，这里会修复或按需移植补丁**，并验证与个人改动的兼容性。移植时记录官方提交或 issue 及本项目所需的调整。本项目会借鉴上游修复，维护方向也会保留个人修改。
 
-原始代码、设计和第三方组件的贡献属于官方团队及各自作者，本仓库保留其版权和许可证说明。ChameleonLern 由个人维护，项目名称用于区分这份二次开发版本。
+## 已有功能
 
-后续维护遵循以下原则：
+| 功能 | 当前实现 |
+| --- | --- |
+| 卡片与卡槽 | 8 个卡槽；每槽可同时配置 MIFARE Classic 高频和 EM410X 低频卡；按钮／命令切卡；原始卡片数据导入 |
+| 蓝牙环境 | 被动扫描周边广播；缓存最多 6 个环境标识及平滑 RSSI；20 秒过期 |
+| 读卡器特征 | 高频 REQA／WUPA、级联流程、认证类型与块号、RATS、粗粒度时序；不把认证密钥或 nonce 写入学习模型 |
+| 时间 | USB／蓝牙命令同步 UTC 与时区，融合本地时段、工作日／周末；重启后需重新同步 |
+| 学习 | 按钮／手动切卡产生环境标签；明确反馈可关联最近 20 秒内的读卡交互；32 个有限样本，合并相近反馈，替换最旧样本 |
+| 决策 | BLE／读卡器／时间加权匹配；最低评分、候选差距、重复反馈门槛；冲突或不足时保持当前卡 |
+| 切换保护 | 有场时锁定卡槽；手动请求排队；离场等待 350 ms；手动选择保护 30 秒；自动切卡间隔 10 秒；加载失败回退 |
+| 持久化 | 版本化模型与 CRC32；Flash 完成事件检查、失败重试、记录关闭；模型及配置可显式保存／清除 |
+| 管理与构建 | USB CDC／BLE NUS 同一命令协议；Python 管理工具；GCC 构建、主机测试、GitHub Actions 与标签草稿发布 |
 
-1. 按本项目的混合学习与自动选卡目标推进开发，不跟随官方发布节奏，也不自动同步官方分支或全量合并官方新功能。
-2. 持续参考官方代码、问题反馈和修复方案，保持对上游改进的关注。
-3. 对官方发现或修复、且适用于本项目的 bug，在本项目中修复或按需移植官方补丁，并验证与本项目改动的兼容性。
-4. 移植修复时，在提交说明中记录对应的官方提交或 issue，以及本项目所需的调整和验证结果。
+模式：`off` 关闭采样和自动选卡；`observe` 采样、学习并给出建议；`auto` 在满足所有门槛且设备处于模拟模式时自动切卡。默认权重为蓝牙 60、读卡器 30、时间 10，最低分 70、领先差距 12、相近反馈至少 2 次。缺失的特征不参与评分，时间本身不能触发选卡。
 
-## 当前代码状态
+读卡器交互通常要在开始刷卡后才能采集。本版不会在一次交互中换卡：读卡器特征可用于离场后的推荐和下一次靠近时的选择，首次靠近主要依赖已扫描到的蓝牙环境。只有通用寻卡指令时不将读卡器视为可靠身份。低频读卡器暂未实现独立身份特征，主要依靠周边蓝牙和时间。
 
-| 模块 | 已有实现 | 尚需补齐 |
-| --- | --- | --- |
-| 卡槽管理 | 8 个卡槽；每槽可配置高频与低频卡；按钮和 USB 命令切槽 | 自动选择、安全切换和异常回退 |
-| 高频模拟 | ISO14443-A、Mifare Classic 系列处理逻辑 | 稳定性验证；NTAG 当前仅有类型定义与空处理回调 |
-| 低频模拟 | EM410X 模拟逻辑 | 实机兼容性与稳定性验证 |
-| 读卡与通信 | 高频、低频读卡；USB 数据帧；Python CLI | 真实卡片数据导入模拟卡槽的完整流程 |
-| 蓝牙 | 外设广播、连接和 NUS 服务框架 | 周边广播扫描、RSSI 与环境特征采集；通信处理完善 |
-| 读卡器特征 | 交互状态机、部分 Mifare 认证日志 | 特征提取、场景识别和与卡槽的关联 |
-| 时间 | 运行期间的计时与休眠控制 | 时间同步、日期／星期／时段特征与休眠后的时间保持 |
-| 混合学习 | 尚未接入 | 样本记录、融合评分、置信度、手动纠正与持久化 |
+蓝牙环境不是定位服务。公共／静态地址、较稳定的设备名、128 位 UUID、iBeacon／Eddystone UID 可提供环境线索；仅有随机隐私地址或通用厂商／服务编号的广播会被排除。相同广播、遮挡、设备更换和 RSSI 波动仍可能导致不确定或误判，建议通过观察模式确认各场景可区分后启用自动模式。
 
-这些状态来自源码检查，不代表已通过完整固件编译或硬件验收。
+## 使用示例
 
-## 仓库结构
-
-```text
-firmware/
-  application/
-    app/                 应用、卡槽、通信和 RFID 代码
-    project/             Keil 应用工程
-    sdk/                 随仓库提供的 Nordic SDK 组件
-  bootloader/
-    app/                 DFU 引导程序和公钥
-    sdk/                 引导程序使用的 Nordic SDK
-    Makefile             引导程序 GCC 构建入口
-software/
-  script/                Python 交互式 CLI 与设备通信
-  src/                   配套 C 工具及 CMake 工程
-resource/                从历史基线继承的 DFU 签名相关材料
-LICENSE                  GNU GPLv3 正文
-LICENSES/                原有 GPLv2 代码对应的许可正文
-NOTICE.md                来源、版权与第三方许可说明
-```
-
-## 开发与构建
-
-当前硬件目标为 **nRF52840**，使用 **S140 SoftDevice**。实际引脚配置以 [`rfid_main.h`](firmware/application/app/rfid_main.h) 为准；构建配置中的 `BOARD_PCA10056` 不表示可以直接用于任意开发板。
-
-### 应用固件
-
-使用 Keil µVision 打开 [`firmware/application/project/nfctag.uvprojx`](firmware/application/project/nfctag.uvprojx)，选择 `nrf52` 目标。
-
-工程记录的工具链为 ARM Compiler 5.06 update 7，设备包为 `NordicSemiconductor.nRF_DeviceFamilyPack` 8.40.3。应用 SDK 配置位于 [`sdk_config.h`](firmware/application/sdk/config/sdk_config.h)。当前应用没有提供 Makefile、CMake 或 PlatformIO 构建入口，后续需补齐可复现的构建流程。
-
-### 引导程序
-
-引导程序包含 GNU Make 构建入口；仓库内 SDK 的发布说明标记为 nRF5 SDK 17.1.0。工具链路径配置见 [`Makefile.posix`](firmware/bootloader/sdk/components/toolchain/gcc/Makefile.posix)，默认记录的 GCC 版本为 9.3.1。
-
-准备 ARM GNU 工具链后，在仓库根目录执行：
-
-```sh
-make -C firmware/bootloader
-```
-
-该入口只构建引导程序。烧录前需核对应用、SoftDevice、引导程序及 DFU 公钥的配套关系。
-
-### Python CLI
-
-建议使用 Python 3.10 或更新版本，并在虚拟环境中安装脚本实际使用的依赖：
+需要 Python 3.10+，连接设备 USB CDC 后执行（Windows 将端口换成 `COM3` 等）：
 
 ```sh
 python3 -m venv .venv
 . .venv/bin/activate
-python3 -m pip install pyserial colorama
-python3 software/script/chameleon_cli_main.py
+python3 -m pip install -r software/script/requirements.txt
+python3 software/script/chameleon_learning.py --port /dev/ttyACM0 status
 ```
 
-Windows 下使用 `.venv\Scripts\activate` 激活虚拟环境。CLI 启动后，可按实际设备端口输入：
-
-```text
-hw connect -p /dev/ttyACM0
-hw mode get
-```
-
-Windows 端口通常为 `COM` 加编号。命令参数以 CLI 内的帮助信息为准。
-
-### 配套 C 工具
-
-准备 C 编译器和 CMake 后，在仓库根目录执行：
+以下命令的卡槽编号为 **1..8**；协议内部使用 **0..7**。
 
 ```sh
-cmake -S software/src -B software/src/out
-cmake --build software/src/out
+# 将自己已有的原始卡片数据写入卡槽；会覆盖该槽对应频率的卡片数据。
+python3 software/script/chameleon_learning.py --port /dev/ttyACM0 import-mf1 1 my-card.bin
+python3 software/script/chameleon_learning.py --port /dev/ttyACM0 import-em410x 2 0102030405
+
+# 开启观察模式，同步北京时间，然后在实际场景中选择正确的卡。
+python3 software/script/chameleon_learning.py --port /dev/ttyACM0 mode observe
+python3 software/script/chameleon_learning.py --port /dev/ttyACM0 sync-time --timezone 480
+python3 software/script/chameleon_learning.py --port /dev/ttyACM0 select 1
+
+# 在各场景多次使用并反馈正确卡槽；reader 反馈应在离场后 20 秒内提交。
+python3 software/script/chameleon_learning.py --port /dev/ttyACM0 train 1 --source environment
+python3 software/script/chameleon_learning.py --port /dev/ttyACM0 train 1 --source reader
+python3 software/script/chameleon_learning.py --port /dev/ttyACM0 predict
+python3 software/script/chameleon_learning.py --port /dev/ttyACM0 samples
+
+# 确认建议稳定后开启自动模式。
+python3 software/script/chameleon_learning.py --port /dev/ttyACM0 mode auto
+python3 software/script/chameleon_learning.py --port /dev/ttyACM0 save
+
+# 查看卡槽、调整门槛、清除错误学习或关闭自动模式。
+python3 software/script/chameleon_learning.py --port /dev/ttyACM0 slots
+python3 software/script/chameleon_learning.py --port /dev/ttyACM0 configure --min-score 80 --margin 15
+python3 software/script/chameleon_learning.py --port /dev/ttyACM0 forget 1
+python3 software/script/chameleon_learning.py --port /dev/ttyACM0 mode off
 ```
 
-现有 CMake 配置将可执行文件输出到 `software/bin/`。这部分构建的是上位机辅助工具，不包含应用固件。
+`init-card 1 1k` 可创建测试用默认卡；支持 `mini/1k/2k/4k/em410x`。MIFARE 导入接受 320／1024／2048／4096 字节的完整原始 dump，目前使用 4 字节 UID 的 block 0 格式；不包含独立导入 7／10 字节 UID、防冲撞参数或 ATS 的管理命令。CLI 在读卡模式下分块导入，完成保存后恢复原模式；失败时保留读卡模式，重试完整导入后再使用卡片。
 
-## 后续开发顺序
+手动选择立即建立保护期，实际切换可能等待离场。`status` 显示待切槽、建议、分数、原因、可用槽和存储状态。按钮学习在观察／自动模式下启用；明确反馈不会把自动推荐结果反复当作训练标签。纠正错误标签时可先 `forget` 原卡槽的历史，再重新学习。
 
-- 修复编译声明冲突、Flash 记录关闭、缺失卡槽数据处理、认证日志边界和蓝牙接收路径问题，建立可靠的基础固件。
-- 接入蓝牙环境扫描、时间同步和读卡器交互特征采集，明确采样窗口、缓存与功耗策略。
-- 将手动选择的卡槽与当时的环境特征关联，记录学习样本，并支持纠正和清除历史。
-- 实现可解释的融合评分与置信度判断；不确定时保留手动选择，并在一次刷卡交互中锁定卡槽。
-- 补齐构建检查、持久化验证和实机验收，再发布可用的自动选卡版本。
+## 构建、测试与 CI/CD
 
-现有 System OFF 深度休眠会停止蓝牙扫描与运行计时。自动选卡需要同时设计唤醒、扫描周期、特征缓存和时间保持方式。
+目标硬件为 **nRF52840 + S140 7.2.0**。实际引脚以 [`rfid_main.h`](firmware/application/app/rfid_main.h) 为准，`BOARD_PCA10056` 编译宏不表示可以直接烧入任意开发板。
+
+在 Debian／Ubuntu 安装 ARM GCC、binutils 和 newlib 后构建：
+
+```sh
+sudo apt-get install --no-install-recommends gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi libnewlib-dev
+python3 scripts/build_firmware.py
+python3 scripts/verify_firmware.py build/firmware/chameleon-learning.hex
+SANITIZE=1 scripts/test.sh
+```
+
+可用 `--cc /path/to/arm-none-eabi-gcc` 指定工具链。输出在 `build/firmware/`：HEX、BIN、ELF、MAP、编译告警和包含 SHA256 的 manifest。构建脚本从 Keil 工程读取源文件与 include 配置，替换 GCC 专用启动／错误处理实现，保留持久化结构所需的短枚举布局。
+
+主机测试覆盖融合评分、冲突、反馈、样本容量、模型损坏、时间回绕、广播解析、通信分片／边界、Flash 错误、切卡互锁、空卡槽清理和失败回退；使用 AddressSanitizer 与 UndefinedBehaviorSanitizer。它们不能代替 RF 硬件测试。
+
+GitHub Actions 对 push／PR 自动运行测试、编译和镜像范围检查，并保存构建产物。推送 `v*` 版本标签后，只有所有检查成功才创建或更新 **草稿 Release**。发布包为未签名的应用镜像，不会自动烧录设备，也不会使用仓库继承的私钥。流程见 [CI 工作流](.github/workflows/ci.yml)，烧录与验收见 [FLASHING.md](docs/FLASHING.md)。
+
+Keil 工程仍可打开 [`nfctag.uvprojx`](firmware/application/project/nfctag.uvprojx)，新增模块及保守内存范围已接入；本次验证使用 GCC，未执行商业 Keil 编译。原引导程序构建入口仍为 `make -C firmware/bootloader`，需要匹配其工具链配置；本次 CI 构建应用固件。
+
+## 目录与实现说明
+
+```text
+firmware/application/app/selection/  可测试的融合核心与硬件适配
+firmware/application/app/            RFID、通信、存储、模式及运行循环
+firmware/application/project/        Keil 工程与 GCC 链接脚本
+firmware/bootloader/                 原引导程序与 SDK
+software/script/chameleon_learning.py 学习、时间、卡片导入管理
+scripts/                            构建、镜像校验及测试入口
+tests/                              主机测试与硬件接口替身
+docs/                               协议、验收与发布说明
+```
+
+设计和数据格式见 [学习模块说明](docs/LEARNING.md)，外部应用可通过 [命令协议](docs/PROTOCOL.md) 对接 USB 或 BLE NUS。原交互式 CLI 及 `software/src/` 辅助工具仍保留。
+
+观察／自动模式使用 System ON 空闲等待以保留扫描与运行时钟，会增加功耗；扫描默认每 8 秒运行 1.2 秒。关闭模式可以进入原有 System OFF 深睡，重启／深睡唤醒后的时间失效，必须重新同步。当前没有外置 RTC、手机后台自动校时或实机续航数据。NTAG 仍只有历史类型定义，没有完整模拟实现。
 
 ## 许可证与签名材料
 
-本项目的个人修改及基于官方代码形成的派生部分按 **GNU GPLv3** 发布，完整条款见 [`LICENSE`](LICENSE)。原有 GPLv2-or-later 源文件的声明仍然保留；Nordic SDK、SoftDevice 和其他第三方组件适用各自许可证，具体范围见 [`NOTICE.md`](NOTICE.md)。
+个人修改及基于官方代码形成的派生部分按 **GNU GPLv3** 发布，条款见 [LICENSE](LICENSE)。原 GPLv2-or-later 声明保留，Nordic SDK、SoftDevice 等第三方组件适用各自许可证，见 [NOTICE.md](NOTICE.md)。
 
-开源许可证与 DFU 签名密钥是两种不同的材料。`resource/` 中的历史签名材料来自原始基线，不能作为新项目独有的可信签名凭据；正式发布应另外准备私有签名密钥和与之匹配的引导程序公钥，私钥不应提交到仓库。
+开源许可证与 DFU 密钥不同。`resource/` 中的历史签名材料来自原始基线，不能作为新项目独有的可信签名凭据；正式 DFU 应使用自己的私有密钥和匹配的引导程序公钥，私钥保存在仓库外或被忽略的 `resource/private/`。

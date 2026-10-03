@@ -429,6 +429,7 @@ uint8_t em410x_read(uint8_t *uid, uint32_t timeout_ms)
 	
 	// 在超时中读卡
 	autotimer* p_at = bsp_obtain_timer(0);
+    APP_ERROR_CHECK_BOOL(p_at != NULL);
 	// NO_TIMEOUT_1MS(p_at, timeout_ms)
 	while(NO_TIMEOUT_1MS(p_at, timeout_ms)) {
 		//执行读卡，读到就退出

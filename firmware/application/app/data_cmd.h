@@ -15,6 +15,19 @@
 // ******************************************************************
 
 
+#define DATA_CMD_SET_EM410X_DATA (1006)
+#define DATA_CMD_SET_MF1_DATA (1007)
+#define DATA_CMD_GET_SLOT_INFO (1008)
+#define DATA_CMD_SELECTION_STATUS (1100)
+#define DATA_CMD_SELECTION_CONFIG_SET (1101)
+#define DATA_CMD_SELECTION_TIME_SYNC (1102)
+#define DATA_CMD_SELECTION_TRAIN (1103)
+#define DATA_CMD_SELECTION_FORGET (1104)
+#define DATA_CMD_SELECTION_PREDICT (1105)
+#define DATA_CMD_SELECTION_SAMPLES (1106)
+#define DATA_CMD_SELECTION_SAVE (1107)
+#define DATA_CMD_SELECTION_CONFIG_GET (1108)
+
 // ******************************************************************
 //                      CMD for hf reader
 //                  Range from 2000 -> 2999

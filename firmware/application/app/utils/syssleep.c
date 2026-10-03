@@ -1,6 +1,7 @@
 #include "nrfx_power.h"
 #include "app_timer.h"
 #include "syssleep.h"
+#include "selection.h"
 
 #include "nrf_log.h"
 #include "nrf_log_ctrl.h"
@@ -10,8 +11,8 @@
 APP_TIMER_DEF(m_app_sleep_timer);       // 用于设备休眠的定时器
 static volatile bool m_system_off_enter = false;
 
-extern bool g_is_ble_connected; // 标志BLE的链接状态
-extern bool g_is_tag_emulating; // 标志模拟卡的状态
+extern volatile bool g_is_ble_connected; // 标志BLE的链接状态
+extern volatile bool g_is_tag_emulating; // 标志模拟卡的状态
 
 
 /** @brief 设备休眠定时器事件 
@@ -64,7 +65,7 @@ void sleep_timer_start(uint32_t time_ms) {
  */
 void sleep_system_run(void (*sysOffSleep)(), void (*sysOnSleep)()) {
     // No task to process, sleep enter
-    if (m_system_off_enter) {
+    if (m_system_off_enter && !selection_background_enabled() && !selection_field_active()) {
         // Enter Sleep(System_OFF sleep mode) zzzzz.....
         sysOffSleep();
     } else {

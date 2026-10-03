@@ -17,6 +17,9 @@
 
 #include "syssleep.h"
 #include "ble_main.h"
+#include "dataframe.h"
+#include "selection.h"
+#include "bsp_time.h"
 
 #define NRF_LOG_MODULE_NAME ble_main
 #include "nrf_log.h"
@@ -27,7 +30,7 @@ NRF_LOG_MODULE_REGISTER();
 
 #define APP_BLE_CONN_CFG_TAG            1                                           /**< A tag identifying the SoftDevice BLE configuration. */
 
-#define DEVICE_NAME                     "Nordic_UART"                               /**< Name of device. Will be included in the advertising data. */
+#define DEVICE_NAME                     "ChameleonLern"                               /**< Name of device. Will be included in the advertising data. */
 #define NUS_SERVICE_UUID_TYPE           BLE_UUID_TYPE_VENDOR_BEGIN                  /**< UUID type for the Nordic UART Service (vendor specific). */
 
 #define APP_BLE_OBSERVER_PRIO           3                                           /**< Application's BLE observer priority. You shouldn't need to modify this value. */
@@ -52,7 +55,21 @@ static ble_uuid_t m_adv_uuids[]          =                                      
 {
     {BLE_UUID_NUS_SERVICE, NUS_SERVICE_UUID_TYPE}
 };
-bool g_is_ble_connected = false;
+volatile bool g_is_ble_connected = false;
+static uint8_t scan_bytes[BLE_GAP_SCAN_BUFFER_MIN];
+static ble_data_t scan_buffer = {.p_data = scan_bytes, .len = sizeof(scan_bytes)};
+static volatile bool scan_active;
+static bool scan_started;
+static uint32_t scan_since;
+static void environment_report(const ble_gap_evt_adv_report_t *report) {
+    if (!scan_active) return;
+    uint32_t key = sel_ble_identity(report->peer_addr.addr, report->peer_addr.addr_type,
+                                    report->data.p_data, report->data.len);
+    selection_ble_report(key, report->rssi);
+    scan_buffer.len = sizeof(scan_bytes);
+    if (sd_ble_gap_scan_start(NULL, &scan_buffer) != NRF_SUCCESS) scan_active = false;
+}
+
 
 
 /**@brief Function for the GAP initialization.
@@ -92,34 +109,12 @@ static void gap_params_init(void)
  * @param[in] p_evt       Nordic UART Service event.
  */
 /**@snippet [Handling the data received over BLE] */
-static void nus_data_handler(ble_nus_evt_t * p_evt)
-{
-
-    if (p_evt->type == BLE_NUS_EVT_RX_DATA)
-    {
-        uint32_t err_code;
-
-        NRF_LOG_DEBUG("Received data from BLE NUS. Writing data on UART.");
-        NRF_LOG_HEXDUMP_DEBUG(p_evt->params.rx_data.p_data, p_evt->params.rx_data.length);
-
-        for (uint32_t i = 0; i < p_evt->params.rx_data.length; i++)
-        {
-            do
-            {
-                // err_code = app_uart_put(p_evt->params.rx_data.p_data[i]);
-                if ((err_code != NRF_SUCCESS) && (err_code != NRF_ERROR_BUSY))
-                {
-                    NRF_LOG_ERROR("Failed receiving NUS message. Error 0x%x. ", err_code);
-                    APP_ERROR_CHECK(err_code);
-                }
-            } while (err_code == NRF_ERROR_BUSY);
-        }
-        if (p_evt->params.rx_data.p_data[p_evt->params.rx_data.length - 1] == '\r')
-        {
-            // while (app_uart_put('\n') == NRF_ERROR_BUSY);
-        }
-    }
-
+static volatile bool nus_ready;
+static void nus_data_handler(ble_nus_evt_t *evt) {
+    if (evt->type == BLE_NUS_EVT_RX_DATA)
+        data_frame_receive_from(DATA_FRAME_BLE, evt->params.rx_data.p_data, evt->params.rx_data.length);
+    else if (evt->type == BLE_NUS_EVT_COMM_STARTED) nus_ready = true;
+    else if (evt->type == BLE_NUS_EVT_COMM_STOPPED) nus_ready = false;
 }
 /**@snippet [Handling the data received over BLE] */
 
@@ -247,7 +242,6 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             sleep_timer_stop();
         
             NRF_LOG_INFO("Connected");
-            APP_ERROR_CHECK(err_code);
             m_conn_handle = p_ble_evt->evt.gap_evt.conn_handle;
             err_code = nrf_ble_qwr_conn_handle_assign(&m_qwr, m_conn_handle);
             APP_ERROR_CHECK(err_code);
@@ -255,6 +249,9 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             break;
 
         case BLE_GAP_EVT_DISCONNECTED:
+            g_is_ble_connected = false;
+            data_frame_reset_channel(DATA_FRAME_BLE);
+            nus_ready = false;
             sleep_timer_start(SLEEP_DELAY_MS_BLE_DISCONNECTED);
         
             NRF_LOG_INFO("Disconnected");
@@ -263,6 +260,12 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             g_is_ble_connected = false;
             break;
 
+        case BLE_GAP_EVT_ADV_REPORT:
+            environment_report(&p_ble_evt->evt.gap_evt.params.adv_report);
+            break;
+        case BLE_GAP_EVT_TIMEOUT:
+            if (p_ble_evt->evt.gap_evt.params.timeout.src == BLE_GAP_TIMEOUT_SRC_SCAN) scan_active = false;
+            break;
         case BLE_GAP_EVT_PHY_UPDATE_REQUEST:
         {
             NRF_LOG_DEBUG("PHY update request.");
@@ -407,4 +410,43 @@ void ble_slave_init(void) {
     services_init();                    // 服务特征初始化
     advertising_init();                 // 广播参数初始化
     conn_params_init();                 // 连接参数初始化
+}
+
+#define BLE_TX_QUEUE 4
+static struct { uint16_t length; uint8_t bytes[522]; } ble_tx[BLE_TX_QUEUE];
+static uint8_t ble_tx_head, ble_tx_tail;
+static uint16_t ble_tx_offset;
+
+bool ble_command_write(const void *data, uint16_t length) {
+    uint8_t next = (uint8_t)((ble_tx_head + 1) % BLE_TX_QUEUE);
+    if (!data || length > 522 || !g_is_ble_connected || next == ble_tx_tail) return false;
+    memcpy(ble_tx[ble_tx_head].bytes, data, length); ble_tx[ble_tx_head].length = length;
+    ble_tx_head = next; return true;
+}
+
+void ble_command_process(void) {
+    if (!g_is_ble_connected) { ble_tx_tail = ble_tx_head; ble_tx_offset = 0; return; }
+    if (!nus_ready || ble_tx_head == ble_tx_tail) return;
+    uint16_t remaining = ble_tx[ble_tx_tail].length - ble_tx_offset;
+    uint16_t length = remaining < m_ble_nus_max_data_len ? remaining : m_ble_nus_max_data_len;
+    ret_code_t result = ble_nus_data_send(&m_nus, ble_tx[ble_tx_tail].bytes + ble_tx_offset, &length, m_conn_handle);
+    if (result == NRF_SUCCESS) {
+        ble_tx_offset += length;
+        if (ble_tx_offset == ble_tx[ble_tx_tail].length) { ble_tx_offset = 0; ble_tx_tail = (uint8_t)((ble_tx_tail + 1) % BLE_TX_QUEUE); }
+    }
+}
+
+bool ble_environment_active(void) { return scan_active; }
+void ble_environment_process(bool enabled, uint16_t period_ms, uint16_t window_ms) {
+    uint32_t now = bsp_monotonic_ms();
+    if ((!enabled || (uint32_t)(now - scan_since) >= window_ms) && scan_active) {
+        (void)sd_ble_gap_scan_stop(); scan_active = false;
+    }
+    if (!enabled || scan_active || (scan_started && (uint32_t)(now - scan_since) < period_ms)) return;
+    ble_gap_scan_params_t params = {0};
+    params.active = 0; params.scan_phys = BLE_GAP_PHY_1MBPS;
+    params.interval = 160; params.window = 80; params.timeout = (uint16_t)((window_ms + 9) / 10);
+    scan_buffer.len = sizeof(scan_bytes);
+    ret_code_t result = sd_ble_gap_scan_start(&params, &scan_buffer);
+    scan_since = now; scan_started = true; scan_active = result == NRF_SUCCESS;
 }

@@ -18,7 +18,7 @@
 #include "parity.h"
 
 #ifdef __OPTIMIZE_SIZE__
-uint32_t filter(uint32_t const x) {
+int filter(uint32_t const x) {
     uint32_t f;
 
     f  = 0xf22c0 >> (x       & 0xf) & 16;

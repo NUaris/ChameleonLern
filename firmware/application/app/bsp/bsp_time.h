@@ -20,8 +20,9 @@ typedef struct {
 
 
 // 实现一个判断超时的宏定义
-#define NO_TIMEOUT_1MS(timer, count)    ((((autotimer*)timer)->time <= (count))?  1: 0)
+#define NO_TIMEOUT_1MS(timer, count)    ((timer) != NULL && ((autotimer*)(timer))->time <= (count))
 
+uint32_t bsp_monotonic_ms(void);
 void bsp_timer_init(void);
 void bsp_timer_uninit(void);
 void bsp_timer_start(void);

@@ -1,0 +1,1 @@
+/* Hardware logger is omitted in host tests. */

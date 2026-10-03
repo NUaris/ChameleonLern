@@ -1,6 +1,7 @@
 #include <stdint.h>
 
 #include "lf_tag_em.h"
+#include "selection.h"
 #include "syssleep.h"
 #include "tag_emulation.h"
 #include "fds_util.h"
@@ -122,6 +123,22 @@ static inline bool is_lf_field_exists(void) {
 }
 
 void timer_ce_handler(nrf_timer_event_t event_type, void* p_context) {
+    if (m_tag_type == TAG_TYPE_UNKNOWN && event_type == NRF_TIMER_EVENT_COMPARE2) {
+        ANT_NO_MOD();
+        if (++m_bit_send_position < 64) return;
+        m_bit_send_position = 0;
+        nrfx_timer_disable(&m_timer_send_id);
+        NRF_LPCOMP->INTENCLR = 0xffffffffu;
+        nrf_drv_lpcomp_enable();
+        if (is_lf_field_exists()) {
+            nrf_drv_lpcomp_disable(); nrfx_timer_enable(&m_timer_send_id);
+        } else {
+            m_is_lf_emulating = false; selection_field_event(1, false);
+            NRF_LPCOMP->INTENSET = LPCOMP_INTENSET_UP_Msk;
+            TAG_FIELD_LED_OFF(); sleep_timer_start(SLEEP_DELAY_MS_FIELD_125KHZ_LOST);
+        }
+        return;
+    }
     switch (event_type) {
         // 因为我们配置的是使用CC通道2，所以事件回调
         // 函数中判断NRF_TIMER_EVENT_COMPARE0事件
@@ -164,7 +181,7 @@ void timer_ce_handler(nrf_timer_event_t event_type, void* p_context) {
                 } else {
                     // 开启事件中断，让下次场事件可以正常出入
                     NRF_LPCOMP->INTENSET = LPCOMP_INTENCLR_CROSS_Msk | LPCOMP_INTENCLR_UP_Msk | LPCOMP_INTENCLR_DOWN_Msk | LPCOMP_INTENCLR_READY_Msk;
-                    g_is_tag_emulating = false;                             // 重设模拟中的标志位
+                    selection_field_event(1, false);                             // 重设模拟中的标志位
                     m_is_lf_emulating = false;
                     TAG_FIELD_LED_OFF()                                     // 确保关闭LF的场状态的指示灯
                     sleep_timer_start(SLEEP_DELAY_MS_FIELD_125KHZ_LOST);    // 启动进入休眠的定时器
@@ -193,7 +210,7 @@ static void lpcomp_event_handler(nrf_lpcomp_event_t event) {
     if (!m_is_lf_emulating && event == NRF_LPCOMP_EVENT_UP) {
         // 设置模拟状态标志位
         m_is_lf_emulating = true;
-        g_is_tag_emulating = true;
+        selection_field_event(1, true);
         
         // 关闭比较器
         nrf_drv_lpcomp_disable();
@@ -229,7 +246,7 @@ static void lf_sense_enable(void) {
     // event handler will be executed when defined action is detected
     err_code = nrf_drv_lpcomp_init(&config, lpcomp_event_handler);
     APP_ERROR_CHECK(err_code);
-    nrf_drv_lpcomp_enable();    // 使能低功耗比较器
+    // 使能低功耗比较器
     
     // 初始化用于震荡曼彻斯特波的定时器
     uint32_t time_us = LF_125KHZ_EM410X_BIT_CLOCK;  // 定时时间250us
@@ -244,6 +261,8 @@ static void lf_sense_enable(void) {
     time_ticks = nrfx_timer_us_to_ticks(&m_timer_send_id, time_us);
     // 设置定时器捕获/比较通道及该通道的比较值，使能通道的比较中断
     nrfx_timer_extended_compare(&m_timer_send_id, NRF_TIMER_CC_CHANNEL2, time_ticks, NRF_TIMER_SHORT_COMPARE2_CLEAR_MASK, true);
+
+    nrf_drv_lpcomp_enable();
 
     // 如果一初始化完就发现当前处于场中，并且没有处于广播状态，就主动触发广播
     if (!m_is_lf_emulating && is_lf_field_exists()) {
@@ -291,6 +310,11 @@ void lf_tag_125khz_sense_switch(bool enable) {
  * @param buffer    数据缓冲区
  */
 int lf_tag_em410x_data_loadcb(tag_specific_type_t type, tag_data_buffer_t* buffer) {
+    if (!buffer || type == TAG_TYPE_UNKNOWN) {
+        m_tag_type = TAG_TYPE_UNKNOWN;
+        m_id_bit_data = 0;
+        return 0;
+    }
     // 确保外部容量足够转换为信息结构体
     if (buffer->length >= LF_EM410X_TAG_ID_SIZE) {
         // 此处直接转换ID卡号为对应的bit数据流
@@ -326,7 +350,7 @@ int lf_tag_em410x_data_savecb(tag_specific_type_t type, tag_data_buffer_t* buffe
  */
 bool lf_tag_em410x_data_factory(uint8_t slot, tag_specific_type_t tag_type) {
     // default id, must to align(4), more word...
-    uint8_t tag_id[8] = { 0xDE, 0xAD, 0xBE, 0xEF, 0x88 };
+    uint8_t tag_id[8] ALIGN_U32 = { 0xDE, 0xAD, 0xBE, 0xEF, 0x88 };
     // 将数据写进去flash
     tag_sense_type_t sense_type = get_sense_type_from_tag_type(tag_type);
     fds_slot_record_map_t map_info; // 获取专用卡槽FDS记录信息

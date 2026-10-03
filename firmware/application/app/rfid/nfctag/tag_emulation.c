@@ -5,6 +5,11 @@
 #include "fds_util.h"
 #include "tag_emulation.h"
 #include "tag_persistence.h"
+#include "selection.h"
+#include "rfid_main.h"
+#include "app_util_platform.h"
+#include "nrf_nfct.h"
+#include <string.h>
 
 
 #define NRF_LOG_MODULE_NAME tag_emu
@@ -27,7 +32,7 @@ NRF_LOG_MODULE_REGISTER();
  */
 
 // 标志当前是否在模拟卡中
-bool g_is_tag_emulating = false;
+volatile bool g_is_tag_emulating = false;
 
 
 // **********************  可持久化参数开始 **********************
@@ -35,11 +40,12 @@ bool g_is_tag_emulating = false;
 /**
  * 标签数据存在于flash中的信息，总长度必须要 4字节（整字）对齐！！！
  */
-static uint8_t m_tag_data_buffer_lf[12];      // 低频卡数据缓冲区
+static uint8_t m_tag_data_buffer_lf[12] ALIGN_U32;
+static bool m_lf_loaded, m_hf_loaded;      // 低频卡数据缓冲区
 static uint16_t m_tag_data_lf_crc;
 static tag_data_buffer_t m_tag_data_lf = { sizeof(m_tag_data_buffer_lf), m_tag_data_buffer_lf, &m_tag_data_lf_crc };
 
-static uint8_t m_tag_data_buffer_hf[4500];    // 高频卡数据缓冲区
+static uint8_t m_tag_data_buffer_hf[4500] ALIGN_U32;    // 高频卡数据缓冲区
 static uint16_t m_tag_data_hf_crc;
 static tag_data_buffer_t m_tag_data_hf = { sizeof(m_tag_data_buffer_hf), m_tag_data_buffer_hf, &m_tag_data_hf_crc };
 
@@ -150,117 +156,69 @@ tag_data_buffer_t* get_buffer_by_tag_type(tag_specific_type_t type) {
 /**
  * 根据类型加载数据
  */
-static void load_data_by_tag_type(uint8_t slot, tag_specific_type_t tag_type) {
-    // 可能该卡槽未启用该类型的标签的模拟，直接跳过加载此数据
-    if (tag_type == TAG_TYPE_UNKNOWN) {
-        return;
+static bool load_data_by_tag_type(uint8_t slot, tag_specific_type_t type) {
+    tag_sense_type_t sense = get_sense_type_from_tag_type(type);
+    if (type == TAG_TYPE_UNKNOWN) return true;
+    tag_data_buffer_t *buffer = get_buffer_by_tag_type(type);
+    tag_datas_loadcb_t callback = get_data_loadcb_from_tag_type(type);
+    if (!buffer || !callback || slot >= TAG_MAX_SLOT_NUM) return false;
+    fds_slot_record_map_t map;
+    get_fds_map_by_slot_sense_type(slot, sense, &map);
+    uint16_t length = 0;
+    unsigned expected = sense == TAG_SENSE_LF ? 8u : (unsigned)get_information_size_by_tag_type(type, true);
+    if (!fds_read_sync_size(map.id, map.key, buffer->length, buffer->buffer, &length) || length != expected) return false;
+    if (sense == TAG_SENSE_HF) {
+        nfc_tag_mf1_information_t *info = (nfc_tag_mf1_information_t *)buffer->buffer;
+        if ((info->res_coll.size != 4 && info->res_coll.size != 7 && info->res_coll.size != 10) ||
+            info->config.mode_block_write > NFC_TAG_MF1_WRITE_SHADOW) return false;
     }
-    // 获取专用缓冲区信息
-    tag_data_buffer_t *buffer = get_buffer_by_tag_type(tag_type);
-    if (buffer == NULL) {
-        NRF_LOG_ERROR("No buffer valid!");
-        return;
-    }
-    tag_sense_type_t sense_type = get_sense_type_from_tag_type(tag_type);
-    // 获取专用卡槽FDS记录信息
-    fds_slot_record_map_t map_info;
-    get_fds_map_by_slot_sense_type(slot, sense_type, &map_info);
-    // 根据当前激活的卡槽的场类型，加载指定场的数据到缓冲区
-    // 提示: 如果数据与buffer长度无法匹配，则可能是固件更新导致，这个时候就要将数据进行删除重建
-    bool ret = fds_read_sync(map_info.id, map_info.key, buffer->length, buffer->buffer);
-    if (false == ret) {
-        NRF_LOG_INFO("Tag slot data no exists.");
-        return;
-    }
-    // 数据已经加载到缓冲区，接下来根据激活的卡槽的配置，
-    // 将设定的模拟卡类型（高频卡, 低频卡）指向的场感应配备的BUFFER传递给其
-    tag_datas_loadcb_t fn_loadcb = get_data_loadcb_from_tag_type(tag_type);
-    if (fn_loadcb == NULL) {    // 确保有实现对应的加载过程
-        NRF_LOG_INFO("Tag data loader no impl.");
-        return;
-    }
-    // 通知对应的实现，我们加载完成数据了
-    int length = fn_loadcb(tag_type, buffer);
-    // 读取完成后，我们先保存一份当前数据的CRC，后面保存的时候可以作为变动对比的参考
-    calc_14a_crc_lut(buffer->buffer, length, (uint8_t *)buffer->crc);
-    NRF_LOG_INFO("Load tag slot %d, type %d data done.", slot, tag_type);
+    int used = callback(type, buffer);
+    if (used <= 0 || used > buffer->length) return false;
+    calc_14a_crc_lut(buffer->buffer, used, (uint8_t *)buffer->crc);
+    if (sense == TAG_SENSE_HF) m_hf_loaded = true;
+    else m_lf_loaded = true;
+    return true;
 }
 
 /**
  * 根据类型保存数据
  */
-static void save_data_by_tag_type(uint8_t slot, tag_specific_type_t tag_type) {
-    // 可能该卡槽未启用该类型的标签的模拟，直接跳过保存此数据
-    if (tag_type == TAG_TYPE_UNKNOWN) {
-        return;
-    }
-    tag_data_buffer_t *buffer = get_buffer_by_tag_type(tag_type);
-    if (buffer == NULL) {
-        NRF_LOG_ERROR("No buffer valid!");
-        return;
-    }
-    // 获取用户要保存的数据的长度，这个长度不应该超过全局buffer的大小
-    int data_byte_length = 0;
-    tag_datas_savecb_t fn_savecb = get_data_savecb_from_tag_type(tag_type);
-    if (fn_savecb == NULL) {        // 确保有实现保存过程
-        NRF_LOG_INFO("Tag data saver no impl.");
-        return;
-    } else {
-        data_byte_length = fn_savecb(tag_type, buffer);
-    }
-    // 确保需要保存数据，我们可以通过crc进行判断数据是否发生了变动
-    if (data_byte_length <= 0) {
-        NRF_LOG_INFO("Tag type %d data no save.", tag_type);
-        return;
-    }
-    // 确保要保存的数据不大于目前的缓冲区大小
-    if (data_byte_length > buffer->length) {
-        NRF_LOG_ERROR("Tag data save length overflow.", tag_type);
-        return;
-    }
+static bool save_data_by_tag_type(uint8_t slot, tag_specific_type_t type) {
+    if (type == TAG_TYPE_UNKNOWN) return true;
+    tag_sense_type_t sense = get_sense_type_from_tag_type(type);
+    if ((sense == TAG_SENSE_HF && !m_hf_loaded) || (sense == TAG_SENSE_LF && !m_lf_loaded)) return true;
+    tag_data_buffer_t *buffer = get_buffer_by_tag_type(type);
+    tag_datas_savecb_t callback = get_data_savecb_from_tag_type(type);
+    if (!buffer || !callback) return false;
+    int length = callback(type, buffer);
+    if (length <= 0) return true;
+    if (length > buffer->length) return false;
     uint16_t crc;
-    calc_14a_crc_lut(buffer->buffer, data_byte_length, (uint8_t *)&crc);
-    // 判断数据是否数据发生了变动
-    if (crc == *buffer->crc) {
-        NRF_LOG_INFO("Tag slot data no change, length = %d", data_byte_length);
-        return;
-    }
-    tag_sense_type_t sense_type = get_sense_type_from_tag_type(tag_type);
-    // 获取专用卡槽FDS记录信息
-    fds_slot_record_map_t map_info;
-    get_fds_map_by_slot_sense_type(slot, sense_type, &map_info);
-    // 计算要保存的数据的长度（自动填充整字）
-    int data_word_length = (data_byte_length / 4) + (data_byte_length % 4 > 0 ? 1 : 0);
-    // 调用堵塞式的fds写入函数，将卡槽指定场类型的数据写入到flash中
-    bool ret = fds_write_sync(map_info.id, map_info.key, data_word_length, buffer->buffer);
-    if (ret) {
-        NRF_LOG_INFO("Save tag slot data success.");
-    } else {
-        NRF_LOG_ERROR("Save tag slot data error.");
-    }
-    // 保存完成之后，更新对应内存中的buffer的CRC
+    calc_14a_crc_lut(buffer->buffer, length, (uint8_t *)&crc);
+    if (crc == *buffer->crc) return true;
+    fds_slot_record_map_t map; get_fds_map_by_slot_sense_type(slot, sense, &map);
+    if (!fds_write_sync(map.id, map.key, (uint16_t)((length + 3) / 4), buffer->buffer)) return false;
     *buffer->crc = crc;
+    return true;
 }
 
 /**
  * 根据类型删除数据
  */
-static void delete_data_by_tag_type(uint8_t slot, tag_sense_type_t sense_type) {
-    if (sense_type == TAG_SENSE_NO) {
-        return;
-    }
-    fds_slot_record_map_t map_info;
-    get_fds_map_by_slot_sense_type(slot, sense_type, &map_info);
-    int count = fds_delete_sync(map_info.id, map_info.key);
-    NRF_LOG_INFO("Slot %d delete senese type %d data, record count: %d", slot, sense_type, count);
-}
+
 
 /**
  * 加载模拟卡卡片数据，注意，加载仅仅是数据操作，
  * 启动模拟卡请调用 tag_emulation_sense_run 函数，否则不会感应场事件
  */
 void tag_emulation_load_data(void) {
+    m_hf_loaded = m_lf_loaded = false;
+    nfc_tag_mf1_data_loadcb(TAG_TYPE_UNKNOWN, NULL);
+    lf_tag_em410x_data_loadcb(TAG_TYPE_UNKNOWN, NULL);
+    memset(m_tag_data_buffer_hf, 0, sizeof(m_tag_data_buffer_hf));
+    memset(m_tag_data_buffer_lf, 0, sizeof(m_tag_data_buffer_lf));
     uint8_t slot = tag_emulation_get_slot();
+    if (slot >= TAG_MAX_SLOT_NUM || !slotConfig.group[slot].enable) return;
     load_data_by_tag_type(slot, slotConfig.group[slot].tag_hf);
     load_data_by_tag_type(slot, slotConfig.group[slot].tag_lf);
 }
@@ -268,55 +226,47 @@ void tag_emulation_load_data(void) {
 /**
  * 保存模拟卡配置数据，在合适的时机，应当调用此函数进行数据的保存
  */
-void tag_emulation_save_data(void) {
+bool tag_emulation_save_data(void) {
     uint8_t slot = tag_emulation_get_slot();
-    save_data_by_tag_type(slot, slotConfig.group[slot].tag_hf);
-    save_data_by_tag_type(slot, slotConfig.group[slot].tag_lf);
+    if (slot >= TAG_MAX_SLOT_NUM) return false;
+    bool hf = save_data_by_tag_type(slot, slotConfig.group[slot].tag_hf);
+    bool lf = save_data_by_tag_type(slot, slotConfig.group[slot].tag_lf);
+    return hf && lf;
 }
 
 /**
  * 删除某个卡槽指定的场类型的数据，如果是当前的激活的卡槽的数据，我们还需要动态关闭此卡片的模拟
  */
-void tag_emulation_delete_data(uint8_t slot, tag_sense_type_t sense_type) {
-    // 删除数据
-    delete_data_by_tag_type(slot, sense_type);
-    // 关闭对应的卡槽的模拟卡类型
-    switch(sense_type) {
-        case TAG_SENSE_HF: {
-            slotConfig.group[slot].tag_hf = TAG_TYPE_UNKNOWN;
-        } break;
-        case TAG_SENSE_LF: {
-            slotConfig.group[slot].tag_lf = TAG_TYPE_UNKNOWN;
-        } break;
-        default:
-            break;
-    }
-    // 如果删除的卡槽数据是当前激活的卡槽的（正在模拟），我们还需要进行动态关闭
-    if (slotConfig.config.activated == slot) {
-        tag_emulation_sense_switch(sense_type, false);
-    }
-    // 如果删除了之后，我们发现这个卡槽两个卡都没了，就得把这个卡槽关闭了。
-    if (slotConfig.group[slot].tag_hf == TAG_TYPE_UNKNOWN && slotConfig.group[slot].tag_lf == TAG_TYPE_UNKNOWN) {
+void tag_emulation_delete_data(uint8_t slot, tag_sense_type_t sense) {
+    if (slot >= TAG_MAX_SLOT_NUM || (sense != TAG_SENSE_HF && sense != TAG_SENSE_LF) ||
+        !tag_emulation_idle_pause()) return;
+    fds_slot_record_map_t map; get_fds_map_by_slot_sense_type(slot, sense, &map);
+    if (fds_delete_sync(map.id, map.key) < 0) { tag_emulation_idle_resume(); return; }
+    if (sense == TAG_SENSE_HF) slotConfig.group[slot].tag_hf = TAG_TYPE_UNKNOWN;
+    else slotConfig.group[slot].tag_lf = TAG_TYPE_UNKNOWN;
+    if (slotConfig.group[slot].tag_hf == TAG_TYPE_UNKNOWN && slotConfig.group[slot].tag_lf == TAG_TYPE_UNKNOWN)
         slotConfig.group[slot].enable = false;
-    }
+    if (slot == tag_emulation_get_slot()) tag_emulation_load_data();
+    tag_emulation_idle_resume();
 }
 
 /**
  * 将某个卡槽的数据设置为出厂的预置数据
  */
-bool tag_emulation_factory_data(uint8_t slot, tag_specific_type_t tag_type) {
-    tag_datas_factory_t factory = get_data_factory_from_tag_type(tag_type);
-    if (factory != NULL) {
-        // 执行工厂格式化数据的过程！
-        if (factory(slot, tag_type)) {
-            // 如果当前设置的初始数据卡槽号是当前激活的卡槽，那么我们需要更新到内存中
-            if (tag_emulation_get_slot() == slot) {
-                load_data_by_tag_type(slot, tag_type);
-            }
-            return true;
-        }
+bool tag_emulation_factory_data(uint8_t slot, tag_specific_type_t type) {
+    if (slot >= TAG_MAX_SLOT_NUM || selection_field_active()) return false;
+    tag_datas_factory_t factory = get_data_factory_from_tag_type(type);
+    if (!factory) return false;
+    if (!tag_emulation_idle_pause()) return false;
+    bool success = factory(slot, type);
+    if (success) {
+        if (get_sense_type_from_tag_type(type) == TAG_SENSE_HF) slotConfig.group[slot].tag_hf = type;
+        else slotConfig.group[slot].tag_lf = type;
+        slotConfig.group[slot].enable = true;
+        if (tag_emulation_get_slot() == slot) tag_emulation_load_data();
     }
-    return false;
+    if (get_device_mode() == DEVICE_MODE_TAG) tag_emulation_sense_run();
+    return success;
 }
 
 /**
@@ -324,18 +274,10 @@ bool tag_emulation_factory_data(uint8_t slot, tag_specific_type_t tag_type) {
  * @param enable: 是否使能场感应
  */
 static void tag_emulation_sense_switch_all(bool enable) {
-    uint8_t slot = tag_emulation_get_slot();
-    // NRF_LOG_INFO("Slot %d tag type hf %d, lf %d", slot, slotConfig.group[slot].tag_hf, slotConfig.group[slot].tag_lf);
-    if (slotConfig.group[slot].tag_hf != TAG_TYPE_UNKNOWN) {
-        nfc_tag_14a_sense_switch(enable);
-    } else {
-        nfc_tag_14a_sense_switch(false);
-    }
-    if (slotConfig.group[slot].tag_lf != TAG_TYPE_UNKNOWN) {
-        lf_tag_125khz_sense_switch(enable);
-    } else {
-        lf_tag_125khz_sense_switch(false);
-    }
+    /* Observe both fields even when a slot has no card for that frequency.
+       Empty handlers never emit a UID; LF suppresses modulation when unloaded. */
+    nfc_tag_14a_sense_switch(enable);
+    lf_tag_125khz_sense_switch(enable);
 }
 
 /**
@@ -343,7 +285,7 @@ static void tag_emulation_sense_switch_all(bool enable) {
  * @param type: 场感应类型
  * @param enable: 是否使能该类型的场感应
  */
-static void tag_emulation_sense_switch(tag_sense_type_t type, bool enable) {
+void tag_emulation_sense_switch(tag_sense_type_t type, bool enable) {
     // 检查参数，不允许切换非正常场
     if (type == TAG_SENSE_NO) APP_ERROR_CHECK(NRF_ERROR_INVALID_PARAM);
     // 切换高频
@@ -356,35 +298,33 @@ static void tag_emulation_sense_switch(tag_sense_type_t type, bool enable) {
  * 加载模拟卡配置数据，注意，加载仅仅是卡槽配置
  */
 void tag_emulation_load_config(void) {
-    // 读取卡槽配置数据
-    bool ret = fds_read_sync(FDS_CONFIG_RECORD_FILE_ID, FDS_CONFIG_RECORD_FILE_KEY, sizeof(slotConfig), (uint8_t *)&slotConfig);
-    if (ret) {
-        // 读取完成后，我们先保存一份当前配置的BCC，后面保存的时候可以作为变动对比的参考
-        calc_14a_crc_lut((uint8_t *)&slotConfig, sizeof(slotConfig), (uint8_t *)&m_slot_config_crc);
-        NRF_LOG_INFO("Load tag slot config done.");
-    } else {
-        NRF_LOG_INFO("Tag slot config no exists.");
+    tag_slot_config_t loaded ALIGN_U32;
+    uint16_t length = 0;
+    if (fds_read_sync_size(FDS_CONFIG_RECORD_FILE_ID, FDS_CONFIG_RECORD_FILE_KEY,
+                           sizeof(loaded), (uint8_t *)&loaded, &length) &&
+        length == sizeof(loaded) && loaded.config.activated < TAG_MAX_SLOT_NUM) {
+        bool valid = true;
+        for (unsigned i = 0; i < TAG_MAX_SLOT_NUM; i++) {
+            tag_specific_type_t hf = loaded.group[i].tag_hf, lf = loaded.group[i].tag_lf;
+            if ((hf != TAG_TYPE_UNKNOWN && (hf < TAG_TYPE_MIFARE_Mini || hf > TAG_TYPE_MIFARE_4096)) ||
+                (lf != TAG_TYPE_UNKNOWN && lf != TAG_TYPE_EM410X)) valid = false;
+        }
+        if (valid) slotConfig = loaded;
     }
+    calc_14a_crc_lut((uint8_t *)&slotConfig, sizeof(slotConfig), (uint8_t *)&m_slot_config_crc);
 }
 
 /**
  * 保存模拟卡配置数据
  */
-void tag_emulation_save_config(void) {
-    // 我们正在保存卡槽配置，需要先计算当前的卡槽配置的crc码，用于下面的数据是否更新的判断
-    uint16_t new_calc_crc;
-    calc_14a_crc_lut((uint8_t *)&slotConfig, sizeof(slotConfig), (uint8_t *)&new_calc_crc);
-    if (new_calc_crc != m_slot_config_crc) {    // 在保存之前，先确保卡槽配置有变动了
-        NRF_LOG_INFO("Save tag slot config start.");
-        bool ret = fds_write_sync(FDS_CONFIG_RECORD_FILE_ID, FDS_CONFIG_RECORD_FILE_KEY, sizeof(slotConfig) / 4, (uint8_t *)&slotConfig);
-        if (ret) {
-            NRF_LOG_INFO("Save tag slot config success.");
-        } else {
-            NRF_LOG_ERROR("Save tag slot config error.");
-        }
-    } else {
-        NRF_LOG_INFO("Tag slot config no change.");
-    }
+static bool tag_emulation_save_config(void) {
+    uint16_t crc;
+    calc_14a_crc_lut((uint8_t *)&slotConfig, sizeof(slotConfig), (uint8_t *)&crc);
+    if (crc == m_slot_config_crc) return true;
+    if (!fds_write_sync(FDS_CONFIG_RECORD_FILE_ID, FDS_CONFIG_RECORD_FILE_KEY,
+                        sizeof(slotConfig) / 4, &slotConfig)) return false;
+    m_slot_config_crc = crc;
+    return true;
 }
 
 /**
@@ -414,9 +354,24 @@ void tag_emulation_init(void) {
 /**
  * 保存标签的数据（从RAM中写入到flash）
  */
-void tag_emulation_save(void) {
-    tag_emulation_save_config();    // 保存卡槽配置
-    tag_emulation_save_data();      // 保存卡槽数据
+bool tag_emulation_idle_pause(void) {
+    bool idle;
+    CRITICAL_REGION_ENTER();
+    idle = !selection_field_active() && !(nrf_nfct_field_status_get() & NRF_NFCT_FIELD_STATE_PRESENT_MASK);
+    if (idle && get_device_mode() == DEVICE_MODE_TAG) tag_emulation_sense_end();
+    CRITICAL_REGION_EXIT();
+    return idle;
+}
+
+void tag_emulation_idle_resume(void) {
+    if (get_device_mode() == DEVICE_MODE_TAG) tag_emulation_sense_run();
+}
+
+bool tag_emulation_save(void) {
+    if (!tag_emulation_idle_pause()) return false;
+    bool result = tag_emulation_save_data() && tag_emulation_save_config();
+    tag_emulation_idle_resume();
+    return result;
 }
 
 /**
@@ -430,25 +385,28 @@ uint8_t tag_emulation_get_slot(void) {
  * 设置当前激活的卡槽索引
  */
 void tag_emulation_set_slot(uint8_t index) {
+    if (index >= TAG_MAX_SLOT_NUM) return;
     slotConfig.config.activated = index;    // 重设到新切换的卡槽上
 }
 
 /**
  * 切换到指定索引的卡槽上，此函数将自动完成数据加载
  */
-void tag_emulation_change_slot(uint8_t index, bool sense_disable) {
-    if (sense_disable) {
-        // 关闭模拟卡，避免切换卡槽的时候触发模拟
-        tag_emulation_sense_end();
+bool tag_emulation_change_slot(uint8_t index, bool sense_disable) {
+    if (index >= TAG_MAX_SLOT_NUM || !slotConfig.group[index].enable || selection_field_active()) return false;
+    uint8_t previous = tag_emulation_get_slot();
+    if (index == previous) return true;
+    if (sense_disable && !tag_emulation_idle_pause()) return false;
+    if (!tag_emulation_save_data()) {
+        if (sense_disable) tag_emulation_sense_run();
+        return false;
     }
-    tag_emulation_save_data();      // 保存当前卡片的数据，如果有变动的情况下
-    g_is_tag_emulating = false;     // 重设标志位
-    tag_emulation_set_slot(index);  // 更新激活的卡槽的索引
-    tag_emulation_load_data();      // 然后重新加载卡槽的数据
-    if (sense_disable) {
-        // 根据新的卡槽的配置，我们更新场的监听状态
-        tag_emulation_sense_run();
-    }
+    tag_emulation_set_slot(index);
+    tag_emulation_load_data();
+    bool success = m_hf_loaded || m_lf_loaded;
+    if (!success) { tag_emulation_set_slot(previous); tag_emulation_load_data(); }
+    if (sense_disable) tag_emulation_sense_run();
+    return success;
 }
 
 /**
@@ -456,7 +414,7 @@ void tag_emulation_change_slot(uint8_t index, bool sense_disable) {
  */
 bool get_tag_emulation_slot_enable(uint8_t slot) {
     // 直接返回对应卡槽的使能状态
-    return slotConfig.group[slot].enable;
+    return slot < TAG_MAX_SLOT_NUM && slotConfig.group[slot].enable;
 }
 
 /**
@@ -464,65 +422,94 @@ bool get_tag_emulation_slot_enable(uint8_t slot) {
  */
 void set_tag_emulation_slot_enable(uint8_t slot, bool enable) {
     // 直接设置对应卡槽的使能状态
-    slotConfig.group[slot].enable = enable;
+    if (slot < TAG_MAX_SLOT_NUM) slotConfig.group[slot].enable = enable;
 }
 
 /**
  * 寻找下一个有效使能的卡槽
  */
-uint8_t find_next_tag_emulation_slot(uint8_t slot_now) {
-    uint8_t start_slot = (slot_now + 1 >= TAG_MAX_SLOT_NUM) ? 0 : slot_now + 1;
-    for (uint8_t i = start_slot; i < sizeof(slotConfig.group);) {
-        if (i == slot_now) return slot_now;         // 一次轮回之后没有发现其他被激活的卡槽
-        if (slotConfig.group[i].enable) return i;   // 查看当前遍历的卡槽是否使能，使能则认定当前卡槽为有效使能的卡槽
-        if (i + 1 >= TAG_MAX_SLOT_NUM) {            // 继续下一个轮回
-            i = 0;
-        } else {
-            i += 1;
-        }
+uint8_t find_next_tag_emulation_slot(uint8_t current) {
+    if (current >= TAG_MAX_SLOT_NUM) return 0;
+    uint8_t slot = current;
+    for (unsigned i = 0; i < TAG_MAX_SLOT_NUM; i++) {
+        slot = (uint8_t)((slot + 1) % TAG_MAX_SLOT_NUM);
+        if (tag_emulation_slot_available(slot)) return slot;
     }
-    return slot_now;    // 无法搜索到的情况下默认返回传入的指定的返回值
+    return current;
 }
 
 /**
  * 寻找上一个有效使能的卡槽
  */
-uint8_t find_prev_tag_emulation_slot(uint8_t slot_now) {
-    uint8_t start_slot = (slot_now - 1 < 0) ? (TAG_MAX_SLOT_NUM - 1) : slot_now - 1;
-    for (uint8_t i = start_slot; i < sizeof(slotConfig.group);) {
-        if (i == slot_now) return slot_now;         // 一次轮回之后没有发现其他被激活的卡槽
-        if (slotConfig.group[i].enable) return i;   // 查看当前遍历的卡槽是否使能，使能则认定当前卡槽为有效使能的卡槽
-        if (i - 1 < 0) {    // 继续下一个轮回
-            i = (TAG_MAX_SLOT_NUM - 1); 
-        } else {
-            i -= 1;
-        }
+uint8_t find_prev_tag_emulation_slot(uint8_t current) {
+    if (current >= TAG_MAX_SLOT_NUM) return 0;
+    uint8_t slot = current;
+    for (unsigned i = 0; i < TAG_MAX_SLOT_NUM; i++) {
+        slot = (uint8_t)((slot + 7) % TAG_MAX_SLOT_NUM);
+        if (tag_emulation_slot_available(slot)) return slot;
     }
-    return slot_now;    // 无法搜索到的情况下默认返回传入的指定的返回值
+    return current;
 }
 
 /**
  * 将指定的卡槽的卡槽指定的场类型的卡设置为指定的类型
  */
-void tag_emulation_change_type(uint8_t slot, tag_specific_type_t tag_type) {
-    uint8_t slot_now = tag_emulation_get_slot();
-    tag_sense_type_t sense_type =  get_sense_type_from_tag_type(tag_type);
-    NRF_LOG_INFO("sense type = %d", sense_type);
-    switch (sense_type) {
-        case TAG_SENSE_LF: {
-            slotConfig.group[slot].tag_lf = tag_type;
-            break;
-        }
-        case TAG_SENSE_HF: {
-            slotConfig.group[slot].tag_hf = tag_type;
-            break;
-        }
-        default: break; // 永远不能发生
+bool tag_emulation_change_type(uint8_t slot, tag_specific_type_t type) {
+    if (slot >= TAG_MAX_SLOT_NUM || selection_field_active() || !get_data_loadcb_from_tag_type(type)) return false;
+    bool active = slot == tag_emulation_get_slot();
+    if (active && !tag_emulation_idle_pause()) return false;
+    tag_sense_type_t sense = get_sense_type_from_tag_type(type);
+    if (sense == TAG_SENSE_HF) slotConfig.group[slot].tag_hf = type;
+    else if (sense == TAG_SENSE_LF) slotConfig.group[slot].tag_lf = type;
+    else return false;
+    if (active) {
+        tag_emulation_load_data();
+        if (get_device_mode() == DEVICE_MODE_TAG) tag_emulation_sense_run();
     }
-    NRF_LOG_INFO("tag type = %d", tag_type);
-    // 更新完成之后，我们需要通知更新内存中的相关数据
-    if (sense_type != TAG_SENSE_NO) {
-        load_data_by_tag_type(slot, tag_type);
-        NRF_LOG_INFO("reload data success.");
+    return true;
+}
+
+
+tag_specific_type_t tag_emulation_slot_type(uint8_t slot, tag_sense_type_t sense) {
+    if (slot >= TAG_MAX_SLOT_NUM || (sense != TAG_SENSE_HF && sense != TAG_SENSE_LF)) return TAG_TYPE_UNKNOWN;
+    return sense == TAG_SENSE_HF ? slotConfig.group[slot].tag_hf : slotConfig.group[slot].tag_lf;
+}
+
+bool tag_emulation_slot_available(uint8_t slot) {
+    if (!get_tag_emulation_slot_enable(slot)) return false;
+    for (unsigned i = TAG_SENSE_LF; i <= TAG_SENSE_HF; i++) {
+        tag_sense_type_t sense = (tag_sense_type_t)i;
+        tag_specific_type_t type = tag_emulation_slot_type(slot, sense);
+        if (type == TAG_TYPE_UNKNOWN || !get_data_loadcb_from_tag_type(type)) continue;
+        fds_slot_record_map_t map; get_fds_map_by_slot_sense_type(slot, sense, &map);
+        if (fds_exists(map.id, map.key)) return true;
     }
+    return false;
+}
+
+bool tag_emulation_set_em410x(const uint8_t id[5]) {
+    if (!id || selection_field_active()) return false;
+    if (!tag_emulation_idle_pause()) return false;
+    uint8_t slot = tag_emulation_get_slot();
+    slotConfig.group[slot].tag_lf = TAG_TYPE_EM410X; slotConfig.group[slot].enable = true;
+    memset(m_tag_data_buffer_lf, 0, sizeof(m_tag_data_buffer_lf));
+    memcpy(m_tag_data_buffer_lf, id, 5);
+    lf_tag_em410x_data_loadcb(TAG_TYPE_EM410X, &m_tag_data_lf); m_lf_loaded = true;
+    /* Force a first save even if CRC happens to equal the previous buffer's CRC. */
+    uint16_t crc; calc_14a_crc_lut(m_tag_data_buffer_lf, 5, (uint8_t *)&crc); m_tag_data_lf_crc = (uint16_t)~crc;
+    bool success = tag_emulation_save();
+    if (get_device_mode() == DEVICE_MODE_TAG) tag_emulation_sense_run();
+    return success;
+}
+
+bool tag_emulation_set_mf1_blocks(uint8_t first, uint8_t count, const uint8_t *data) {
+    if (!data || !count || !m_hf_loaded || selection_field_active()) return false;
+    uint8_t slot = tag_emulation_get_slot();
+    tag_specific_type_t type = slotConfig.group[slot].tag_hf;
+    if ((uint16_t)first + count > nfc_tag_mf1_block_count(type)) return false;
+    if (!tag_emulation_idle_pause()) return false;
+    nfc_tag_mf1_information_t *info = (nfc_tag_mf1_information_t *)m_tag_data_buffer_hf;
+    memcpy(info->memory[first], data, count * 16u);
+    if (get_device_mode() == DEVICE_MODE_TAG) tag_emulation_sense_run();
+    return true;
 }

@@ -188,6 +188,7 @@ void pcd_14a_reader_init(void)
 		// 初始化定时器
 		// 这个定时器初始化后就不释放了，始终需要占用着
 		g_timeout_auto_timer = bsp_obtain_timer(0);
+        APP_ERROR_CHECK_BOOL(g_timeout_auto_timer != NULL);
 	}
 }
 

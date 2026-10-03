@@ -218,7 +218,7 @@ void T55xx_Send_Cmd(uint8_t opcode, uint8_t usepassword, uint32_t password, uint
  */
 void T55xx_Write_data(uint8_t *passwd, uint8_t *datas)
 {
-	uint32_t blk1data, blk2data, u32passwd = 0;
+	uint32_t blk1data = 0, blk2data = 0, u32passwd = 0;
 	//提取两个block的数据和密码
 	for (uint8_t dataindex = 0; dataindex < 4; dataindex++)
 	{

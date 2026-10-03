@@ -4,6 +4,8 @@
 #include "fds.h"
 
 
+bool fds_exists(uint16_t id, uint16_t key);
+bool fds_read_sync_size(uint16_t id, uint16_t key, uint16_t max_length, uint8_t *buffer, uint16_t *actual_length);
 bool fds_read_sync(uint16_t id, uint16_t key, uint16_t max_length, uint8_t* buffer);
 bool fds_write_sync(uint16_t id, uint16_t key, uint16_t data_length_words, void* buffer);
 int fds_delete_sync(uint16_t id, uint16_t key);

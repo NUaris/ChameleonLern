@@ -1,6 +1,7 @@
 #include "usb_main.h"
 #include "syssleep.h"
 #include "dataframe.h"
+#include <string.h>
 
 #include "app_usbd.h"
 #include "app_usbd_cdc_acm.h"
@@ -39,11 +40,14 @@ APP_USBD_CDC_ACM_GLOBAL_DEF(m_app_cdc_acm,
 // USB CODE START
 static bool m_usb_connected = false;
 static bool m_usb_port_opened = false;
+static struct { uint16_t length; uint8_t data[DATA_FRAME_MAX_DATA + 10]; } tx_queue[4];
+static uint8_t tx_head, tx_tail;
+static bool tx_busy;
 
 /** @brief User event handler @ref app_usbd_cdc_acm_user_ev_handler_t */
 static void cdc_acm_user_ev_handler(app_usbd_class_inst_t const *p_inst, app_usbd_cdc_acm_user_event_t event) {
     static uint8_t cdc_data_buffer[1];
-    app_usbd_cdc_acm_t const *p_cdc_acm = app_usbd_cdc_acm_class_get(p_inst);
+    UNUSED_PARAMETER(p_inst);
 
     switch (event) {
     case APP_USBD_CDC_ACM_USER_EVT_PORT_OPEN: {
@@ -62,12 +66,16 @@ static void cdc_acm_user_ev_handler(app_usbd_class_inst_t const *p_inst, app_usb
 
     case APP_USBD_CDC_ACM_USER_EVT_PORT_CLOSE:
         NRF_LOG_INFO("CDC ACM port closed");
+        data_frame_reset_channel(DATA_FRAME_USB);
         m_usb_port_opened = false;
+        tx_tail = tx_head; tx_busy = false;
         if (m_usb_connected) {
         }
         break;
 
     case APP_USBD_CDC_ACM_USER_EVT_TX_DONE:
+        if (tx_busy) tx_tail = (uint8_t)((tx_tail + 1) % 4);
+        tx_busy = false;
         break;
 
     case APP_USBD_CDC_ACM_USER_EVT_RX_DONE: {
@@ -114,7 +122,9 @@ static void usbd_user_ev_handler(app_usbd_event_type_t event) {
     case APP_USBD_EVT_POWER_REMOVED:
         sleep_timer_start(SLEEP_DELAY_MS_USB_POWER_DISCONNECTED);
         NRF_LOG_INFO("USB power removed");
-        m_usb_connected = false;
+        data_frame_reset_channel(DATA_FRAME_USB);
+        m_usb_connected = false; m_usb_port_opened = false;
+        tx_tail = tx_head; tx_busy = false;
         app_usbd_stop();
         break;
 
@@ -149,9 +159,17 @@ void usb_cdc_init(void) {
     APP_ERROR_CHECK(ret);
 }
 
-void usb_cdc_write(const void *p_buf, uint16_t length) {
-    ret_code_t err_code = app_usbd_cdc_acm_write(&m_app_cdc_acm, p_buf, length);
-    APP_ERROR_CHECK(err_code);
+bool usb_cdc_write(const void *data, uint16_t length) {
+    uint8_t next = (uint8_t)((tx_head + 1) % 4);
+    if (!data || length > sizeof(tx_queue[0].data) || !m_usb_port_opened || next == tx_tail) return false;
+    memcpy(tx_queue[tx_head].data, data, length); tx_queue[tx_head].length = length;
+    tx_head = next; return true;
+}
+
+void usb_cdc_process(void) {
+    if (tx_busy || tx_head == tx_tail || !m_usb_connected || !m_usb_port_opened) return;
+    if (app_usbd_cdc_acm_write(&m_app_cdc_acm, tx_queue[tx_tail].data, tx_queue[tx_tail].length) == NRF_SUCCESS)
+        tx_busy = true;
 }
 
 // override fputc to printf to cdc serial

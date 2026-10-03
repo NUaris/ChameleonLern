@@ -1,5 +1,6 @@
 #include <hal/nrf_nfct.h>
 #include <nrfx_nfct.h>
+#include "selection.h"
 #include <nrf_gpio.h>
 
 #define NRF_LOG_MODULE_NAME nfc
@@ -388,6 +389,14 @@ void nfc_tag_14a_data_process(uint8_t *p_data)
 #endif
     
     // 开始处理接收到的数据，如果是比特帧可以将数据交由此环节处理
+    if (szDataBits == 7 && (p_data[0] == NFC_TAG_14A_CMD_REQA || p_data[0] == NFC_TAG_14A_CMD_WUPA))
+        selection_reader_command(1, p_data[0] == NFC_TAG_14A_CMD_WUPA);
+    if (m_tag_state_14a == NFC_TAG_STATE_14A_READY && szDataBits >= 16 &&
+        (p_data[0] == 0x93 || p_data[0] == 0x95 || p_data[0] == 0x97))
+        selection_reader_command(2, (uint8_t)(((p_data[0] & 15) << 4) | (p_data[1] >> 4)));
+    if (m_tag_state_14a == NFC_TAG_STATE_14A_ACTIVE && szDataBits == 32 &&
+        p_data[0] == NFC_TAG_14A_CMD_RATS && nfc_tag_14a_checks_crc(p_data, 4))
+        selection_reader_command(6, p_data[1]);
     if (szDataBits <= 8) {
         // 我们可能收到了一个wupa或者reqa指令，或者其他的特殊指令
         bool isREQA = (p_data[0] == NFC_TAG_14A_CMD_REQA);
@@ -584,7 +593,7 @@ void nfc_tag_14a_event_callback(nrfx_nfct_evt_t const *p_event) {
     // Select action to process.
     switch (p_event->evt_id) {
         case NRFX_NFCT_EVT_FIELD_DETECTED: {
-            g_is_tag_emulating = true;
+            selection_field_event(2, true);
             sleep_timer_stop();
             set_slot_ligth_color(1);
 
@@ -606,7 +615,7 @@ void nfc_tag_14a_event_callback(nrfx_nfct_evt_t const *p_event) {
             break;
         }
         case NRFX_NFCT_EVT_FIELD_LOST: {
-            g_is_tag_emulating = false;
+            selection_field_event(2, false);
             sleep_timer_start(SLEEP_DELAY_MS_FIELD_NFC_LOST);
             
             TAG_FIELD_LED_OFF()
@@ -690,7 +699,10 @@ void nfc_tag_14a_set_state(nfc_tag_14a_state_t state) {
  * @param handler 处理器句柄
  */
 void nfc_tag_14a_set_handler(nfc_tag_14a_handler_t* handler) {
-    if (handler != NULL) {
+    if (handler == NULL) {
+        memset(&m_tag_handler, 0, sizeof(m_tag_handler));
+        m_tag_state_14a = NFC_TAG_STATE_14A_IDLE;
+    } else {
         // 直接取出传入的实现赋值到我们的全局对象即可
         m_tag_handler.cb_reset = handler->cb_reset;
         m_tag_handler.cb_state = handler->cb_state;
@@ -715,7 +727,9 @@ void nfc_tag_14a_sense_switch(bool enable) {
             // 初始化中断事件和回调
             nrfx_nfct_config_t nnct = { .rxtx_int_mask = (uint32_t)0xFFFFFFFF, .cb = nfc_tag_14a_event_callback };
             if (nrfx_nfct_init(&nnct) != NRFX_SUCCESS) {
+                m_nfc_sense_state = NFC_SENSE_STATE_DISABLE;
                 NRF_LOG_INFO("Cannot setup NFC!");
+                return;
             }
             // 启动场感应
             nrfx_nfct_enable();
