@@ -2,9 +2,9 @@
 
 [![Firmware CI](https://github.com/NUaris/ChameleonLern/actions/workflows/ci.yml/badge.svg)](https://github.com/NUaris/ChameleonLern/actions/workflows/ci.yml)
 
-ChameleonLern 是 [NUaris](https://github.com/NUaris) 基于官方 [ChameleonUltra](https://github.com/RfidResearchGroup/ChameleonUltra) 历史代码进行个人二次修改的固件项目。目标是结合周边蓝牙环境、读卡器交互特征、时间和个人选择，学习场景与卡槽的关系，自动选择将要使用的卡。
+ChameleonLern 是基于官方 [ChameleonUltra](https://github.com/RfidResearchGroup/ChameleonUltra) 历史代码进行个人二次修改的固件项目。目标是结合周边蓝牙环境、读卡器交互特征、时间和个人选择，学习场景与卡槽的关系，自动选择将要使用的卡。
 
-**已实现第一版设备端混合学习与自动选卡，已通过主机测试和 nRF52840 GCC 编译；尚未完成实体设备验收。** 默认关闭自动选卡，建议先使用观察模式收集反馈。评分表示特征相似程度，不能当作准确率或开门成功率。
+**已实现第一版设备端混合学习与自动选卡，已通过主机测试和 nRF52840 GCC 编译。** 默认关闭自动选卡，建议先使用观察模式收集反馈。评分表示特征相似程度，不能当作准确率或开门成功率。
 
 ## 官方来源与维护方式
 
@@ -93,9 +93,6 @@ SANITIZE=1 scripts/test.sh
 
 主机测试覆盖融合评分、冲突、反馈、样本容量、模型损坏、时间回绕、广播解析、通信分片／边界、Flash 错误、切卡互锁、空卡槽清理和失败回退；使用 AddressSanitizer 与 UndefinedBehaviorSanitizer。它们不能代替 RF 硬件测试。
 
-GitHub Actions 对 push／PR 自动运行测试、编译和镜像范围检查，并保存构建产物。推送 `v*` 版本标签后，只有所有检查成功才创建或更新 **草稿 Release**。发布包为未签名的应用镜像，不会自动烧录设备，也不会使用仓库继承的私钥。流程见 [CI 工作流](.github/workflows/ci.yml)，烧录与验收见 [FLASHING.md](docs/FLASHING.md)。
-
-Keil 工程仍可打开 [`nfctag.uvprojx`](firmware/application/project/nfctag.uvprojx)，新增模块及保守内存范围已接入；本次验证使用 GCC，未执行商业 Keil 编译。原引导程序构建入口仍为 `make -C firmware/bootloader`，需要匹配其工具链配置；本次 CI 构建应用固件。
 
 ## 目录与实现说明
 
