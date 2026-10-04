@@ -2,6 +2,7 @@
 #define APP_CMD_H
 
 #include <stdint.h>
+#include "dfu_entry.h"
 #include "dataframe.h"
 
 

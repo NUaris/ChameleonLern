@@ -13,6 +13,8 @@ build/tests/dataframe
 build/tests/fds
 "${CC:-gcc}" "${flags[@]}" -Itests/stubs -Ifirmware/application/app/selection -Ifirmware/application/app/utils -Ifirmware/application/app tests/test_selection_runtime.c firmware/application/app/selection/selection.c firmware/application/app/selection/selection_core.c -o build/tests/selection_runtime
 build/tests/selection_runtime
-"${CC:-gcc}" "${flags[@]}" -fshort-enums -Wno-pedantic -Wno-unused-variable -include tests/stubs/app_error.h -Ifirmware/application/app/rfid/nfctag -Itests/stubs -Ifirmware/application/app/rfid/nfctag/hf -Ifirmware/application/app/rfid/nfctag/lf -Ifirmware/application/app/rfid -Ifirmware/application/app/selection -Ifirmware/application/app/utils tests/test_tags.c firmware/application/app/rfid/nfctag/tag_emulation.c firmware/application/app/rfid/nfctag/tag_persistence.c firmware/application/app/rfid/crc_utils.c -o build/tests/tags
+"${CC:-gcc}" "${flags[@]}" -fshort-enums -Wno-pedantic -Wno-unused-variable -include tests/stubs/app_error.h -Ifirmware/application/app/rfid/nfctag -Itests/stubs -Ifirmware/application/app -Ifirmware/application/app/rfid/nfctag/hf -Ifirmware/application/app/rfid/nfctag/lf -Ifirmware/application/app/rfid -Ifirmware/application/app/selection -Ifirmware/application/app/utils tests/test_tags.c firmware/application/app/rfid/nfctag/tag_emulation.c firmware/application/app/rfid/nfctag/tag_persistence.c firmware/application/app/rfid/crc_utils.c -o build/tests/tags
 build/tests/tags
+"${CC:-gcc}" "${flags[@]}" -Itests/stubs -Ifirmware/application/app -Ifirmware/application/app/selection tests/test_dfu_entry.c firmware/application/app/dfu/dfu_entry.c -o build/tests/dfu_entry
+build/tests/dfu_entry
 python3 -m unittest discover -s tests -p 'test_*.py' -v

@@ -1,0 +1,2 @@
+cryptography>=44,<48
+protobuf>=5.29.6,<6

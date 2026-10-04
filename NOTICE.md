@@ -32,4 +32,6 @@ ChameleonLern 基于官方 [RfidResearchGroup/ChameleonUltra](https://github.com
 
 ## 固件签名材料
 
-本项目的开源许可证不构成签名证书。历史基线包含 DFU 公钥与签名私钥材料；它们用于说明原有构建关系，不代表 ChameleonLern 拥有独立、保密的签名凭据。新发布版本需要使用单独管理的私钥及匹配的引导程序公钥。
+本项目的开源许可证不构成签名证书。历史基线包含 DFU 公钥与共享签名材料，经核对与现行官方引导程序公钥一致。本项目使用该材料制作兼容官方 Ultra 引导程序的应用 DFU ZIP，不代表拥有独立、保密的签名凭据，也不代表官方为个人修改背书。来源与公钥指纹见 [兼容性记录](docs/UPSTREAM_COMPATIBILITY.md)。
+
+`scripts/dfu_cc_pb2.py` 由仓库已有 Nordic `dfu-cc.proto` 使用 protobuf 5.28.1 编译器生成，沿用源协议所属 SDK 的许可；不将该协议声明为个人原创。生成命令见兼容性记录。

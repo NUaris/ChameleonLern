@@ -18,6 +18,7 @@ class Serial:
         self.sent.append(packet);self.incoming.extend(self.respond(packet));return len(packet)
     def read(self,count):
         count=min(count,3);out=bytes(self.incoming[:count]);del self.incoming[:count];return out
+    def flush(self): pass
 
 class FakeDevice:
     def __init__(self): self.calls=[];self.mode=0;self.current=0;self.fail=None
@@ -46,6 +47,13 @@ class Tests(unittest.TestCase):
         def respond(p):return reply(struct.unpack_from('>H',p,2)[0],b'\0' if p[3]==0xea else b'',0)
         # command 1002 = 0x03ea
         serial=Serial(respond);self.assertEqual(cli.Client(serial).request_mode(1),0);self.assertEqual(len(serial.sent),2)
+    def test_dfu_entry_and_official_no_ack(self):
+        args=cli.parser().parse_args(['--port','fake','enter-dfu'])
+        self.assertTrue(cli.execute(FakeDevice(),args)['acknowledged'])
+        args=cli.parser().parse_args(['--port','fake','enter-dfu','--official'])
+        serial=Serial(lambda p:b'')
+        result=cli.execute(cli.Client(serial,timeout=0.001),args)
+        self.assertFalse(result['acknowledged']);self.assertEqual(serial.sent,[cli.frame(1010)])
     def test_status_layout(self):
         data=bytearray(30);data[0]=1;data[1]=2;data[3]=255;data[6]=7;data[12]=255;data[28]=5
         result=cli.status_decode(data);self.assertEqual(result['mode'],'auto');self.assertEqual(result['eligible_slots'],[1,3]);self.assertIsNone(result['recommendation'])
@@ -62,9 +70,9 @@ class Tests(unittest.TestCase):
             p=Path(folder)/'card.bin';p.write_bytes(bytes(range(256))*16)
             args=cli.parser().parse_args(['--port','fake','import-mf1','8',str(p)])
             device=FakeDevice();cli.execute(device,args)
-            blocks=[payload for command,payload in device.calls if command==1007]
+            blocks=[payload for command,payload in device.calls if command==1201]
             self.assertEqual(b''.join(x[2:] for x in blocks),p.read_bytes());self.assertTrue(all(len(x)<=512 for x in blocks));self.assertEqual(device.mode,0)
-            device=FakeDevice();device.fail=1007
+            device=FakeDevice();device.fail=1201
             with self.assertRaisesRegex(RuntimeError,'reader mode'):cli.execute(device,args)
             self.assertEqual(device.mode,1)
     def test_slots_bounds(self):

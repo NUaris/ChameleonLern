@@ -10,6 +10,7 @@
 #include "data_cmd.h"
 #include "app_cmd.h"
 #include "selection.h"
+#include "dfu_entry.h"
 
 
 #define NRF_LOG_MODULE_NAME app_cmd
@@ -20,8 +21,9 @@ NRF_LOG_MODULE_REGISTER();
 
 
 data_frame_tx_t* cmd_processor_get_version(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
-    uint32_t version = 0xDEADBEEF;
-    return data_frame_make(cmd, 0xDED1, 4, (uint8_t*)&version);
+    const uint8_t version[] = {0, 1};
+    if (length) return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
+    return data_frame_make(cmd, STATUS_DEVICE_SUCCESS, sizeof(version), (uint8_t *)version);
 }
 
 data_frame_tx_t* cmd_processor_change_device_mode(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
@@ -313,7 +315,28 @@ static data_frame_tx_t *before_lf_reader(uint16_t cmd, uint16_t status, uint16_t
     return get_device_mode() == DEVICE_MODE_READER ? NULL : data_frame_make(cmd, STATUS_DEVIEC_MODE_ERROR, 0, NULL);
 }
 
+static data_frame_tx_t *cmd_enter_dfu(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
+    if (length) return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
+    return data_frame_make(cmd, dfu_entry_request(), 0, NULL);
+}
+
+static data_frame_tx_t *cmd_device_identity(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
+    if (length) return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
+    if (cmd == DATA_CMD_GET_DEVICE_MODEL) {
+        uint8_t model = CHAMELEON_DEVICE_MODEL;
+        return data_frame_make(cmd, STATUS_DEVICE_SUCCESS, 1, &model);
+    }
+    static uint8_t version[] = "ChameleonLern-v0.1.0-alpha.2";
+    return data_frame_make(cmd, STATUS_DEVICE_SUCCESS, sizeof(version) - 1, version);
+}
+
+static data_frame_tx_t *cmd_capabilities(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data);
+
 static cmd_data_map_t m_data_cmd_map[] = {
+    {DATA_CMD_ENTER_BOOTLOADER, NULL, cmd_enter_dfu, NULL},
+    {DATA_CMD_GET_DEVICE_MODEL, NULL, cmd_device_identity, NULL},
+    {DATA_CMD_GET_GIT_VERSION, NULL, cmd_device_identity, NULL},
+    {DATA_CMD_GET_DEVICE_CAPABILITIES, NULL, cmd_capabilities, NULL},
     {DATA_CMD_SELECTION_STATUS, NULL, cmd_learning, NULL},
     {DATA_CMD_SELECTION_CONFIG_SET, NULL, cmd_learning, NULL},
     {DATA_CMD_SELECTION_TIME_SYNC, NULL, cmd_learning, NULL},
@@ -355,7 +378,23 @@ static cmd_data_map_t m_data_cmd_map[] = {
 
 /**@brief Function for prcoess data frame(cmd)
  */
+static data_frame_tx_t *cmd_capabilities(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
+    uint8_t capabilities[2 * ARRAY_SIZE(m_data_cmd_map)];
+    if (length) return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
+    for (unsigned i = 0; i < ARRAY_SIZE(m_data_cmd_map); i++) {
+        capabilities[2*i] = (uint8_t)(m_data_cmd_map[i].cmd >> 8);
+        capabilities[2*i+1] = (uint8_t)m_data_cmd_map[i].cmd;
+    }
+    return data_frame_make(cmd, STATUS_DEVICE_SUCCESS, sizeof(capabilities), capabilities);
+}
+
 void on_data_frame_received(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
+    if (app_cmd_dfu_pending()) {
+        data_frame_tx_t *busy = data_frame_make(cmd, STATUS_DEVICE_BUSY, 0, NULL);
+        if (data_frame_source() == DATA_FRAME_BLE) ble_command_write(busy->buffer, busy->length);
+        else usb_cdc_write(busy->buffer, busy->length);
+        return;
+    }
     data_frame_tx_t* response = NULL;
     bool is_cmd_support = false;
     // print info

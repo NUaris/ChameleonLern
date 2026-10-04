@@ -3,17 +3,18 @@
 
 #include <stdint.h>
 #include "tag_base_type.h"
+#include "storage_ids.h"
 
 
 // fds
-#define FDS_CONFIG_RECORD_FILE_KEY   0x1066
-#define FDS_CONFIG_RECORD_FILE_ID    0x1066
+#define FDS_CONFIG_RECORD_FILE_KEY   CL_CONFIG_KEY
+#define FDS_CONFIG_RECORD_FILE_ID    CL_CONFIG_FILE
 /*
  * 每个slot的file_key都不一样
  * 每个slot有两种类型的卡片，因此有两个数据ID（当前）
  */
-#define FDS_SLOT_TAG_DUMP_FILE_KEY   0x1067
-#define FDS_SLOT_TAG_DUMP_FILE_ID    0x1067
+#define FDS_SLOT_TAG_DUMP_FILE_KEY   CL_TAG_KEY_BASE
+#define FDS_SLOT_TAG_DUMP_FILE_ID    CL_TAG_HF_FILE
 
 
 typedef struct {

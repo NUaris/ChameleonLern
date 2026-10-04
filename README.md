@@ -4,7 +4,9 @@
 
 ChameleonLern 是基于官方 [ChameleonUltra](https://github.com/RfidResearchGroup/ChameleonUltra) 历史代码进行个人二次修改的固件项目。目标是结合周边蓝牙环境、读卡器交互特征、时间和个人选择，学习场景与卡槽的关系，自动选择将要使用的卡。
 
-**已实现第一版设备端混合学习与自动选卡，已通过主机测试和 nRF52840 GCC 编译。** 默认关闭自动选卡，建议先使用观察模式收集反馈。评分表示特征相似程度，不能当作准确率或开门成功率。
+**已实现第一版设备端混合学习与自动选卡，并提供量产 Chameleon Ultra 的签名 DFU 应用包。** 默认关闭自动选卡，建议先使用观察模式收集反馈。评分表示特征相似程度，不能当作准确率或开门成功率。
+
+运行官方固件的 Ultra 可以通过现有官方引导程序安装 `ultra-dfu-app.zip`，无需更换引导程序。先备份卡片，再使用支持本地 ZIP 的 DFU 工具；官方默认升级源仍只提供官方固件。安装步骤见 [FLASHING.md](docs/FLASHING.md)。**不要将 `v0.1.0-alpha.1` 的旧原型引脚应用刷入量产 Ultra；使用 `v0.1.0-alpha.2` 或后续版本。** 本项目卡片格式与现行官方不同，需要重新导入，日常管理使用本项目 CLI。
 
 ## 官方来源与维护方式
 
@@ -78,7 +80,7 @@ python3 software/script/chameleon_learning.py --port /dev/ttyACM0 mode off
 
 ## 构建、测试与 CI/CD
 
-目标硬件为 **nRF52840 + S140 7.2.0**。实际引脚以 [`rfid_main.h`](firmware/application/app/rfid_main.h) 为准，`BOARD_PCA10056` 编译宏不表示可以直接烧入任意开发板。
+目标硬件为 **量产 Chameleon Ultra HW v1，nRF52840 + S140 7.2.0**。引脚见 [`board_chameleon_ultra.h`](firmware/application/app/board_chameleon_ultra.h)，已按现行官方实现校正 LF 输入、读卡器电源、按钮和 LED 顺序。DFU hardware version 为设备类型 **0**，与板卡修订号 1 不同；本包不支持 Lite 或旧原型机。`BOARD_PCA10056` 编译宏用于 SDK 编译配置。
 
 在 Debian／Ubuntu 安装 ARM GCC、binutils 和 newlib 后构建：
 
@@ -86,13 +88,15 @@ python3 software/script/chameleon_learning.py --port /dev/ttyACM0 mode off
 sudo apt-get install --no-install-recommends gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi libnewlib-dev
 python3 scripts/build_firmware.py
 python3 scripts/verify_firmware.py build/firmware/chameleon-learning.hex
+python3 -m pip install -r scripts/requirements-dfu.txt
+python3 scripts/package_dfu.py
+python3 scripts/verify_dfu.py build/firmware/ultra-dfu-app.zip --hex build/firmware/chameleon-learning.hex
 SANITIZE=1 scripts/test.sh
 ```
 
-可用 `--cc /path/to/arm-none-eabi-gcc` 指定工具链。输出在 `build/firmware/`：HEX、BIN、ELF、MAP、编译告警和包含 SHA256 的 manifest。构建脚本从 Keil 工程读取源文件与 include 配置，替换 GCC 专用启动／错误处理实现，保留持久化结构所需的短枚举布局。
+可用 `--cc /path/to/arm-none-eabi-gcc` 指定工具链。输出在 `build/firmware/`：签名 DFU ZIP、HEX、BIN、ELF、MAP、编译告警和包含 SHA256 的 manifest。HEX/BIN 为未签名原始应用，签名存在 ZIP 的 Nordic init packet 中。构建脚本从 Keil 工程读取源文件与 include 配置，替换 GCC 专用启动／错误处理实现，保留持久化结构所需的短枚举布局。
 
 主机测试覆盖融合评分、冲突、反馈、样本容量、模型损坏、时间回绕、广播解析、通信分片／边界、Flash 错误、切卡互锁、空卡槽清理和失败回退；使用 AddressSanitizer 与 UndefinedBehaviorSanitizer。它们不能代替 RF 硬件测试。
-
 
 ## 目录与实现说明
 
@@ -115,4 +119,4 @@ docs/                               协议、验收与发布说明
 
 个人修改及基于官方代码形成的派生部分按 **GNU GPLv3** 发布，条款见 [LICENSE](LICENSE)。原 GPLv2-or-later 声明保留，Nordic SDK、SoftDevice 等第三方组件适用各自许可证，见 [NOTICE.md](NOTICE.md)。
 
-开源许可证与 DFU 密钥不同。`resource/` 中的历史签名材料来自原始基线，不能作为新项目独有的可信签名凭据；正式 DFU 应使用自己的私有密钥和匹配的引导程序公钥，私钥保存在仓库外或被忽略的 `resource/private/`。
+开源许可证与 DFU 密钥不同。`resource/` 中的历史签名材料与现行官方公钥一致，用于兼容设备已有的官方引导程序；官方也在源码中公开此共享材料。它不代表本项目拥有独立、保密的发布身份。若将来需要独立签名身份，才需要自行管理私钥和匹配引导程序；普通 Ultra 用户安装本项目应用包无需这样做。来源与核对依据见 [兼容性记录](docs/UPSTREAM_COMPATIBILITY.md)。

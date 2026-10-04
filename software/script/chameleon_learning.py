@@ -83,6 +83,8 @@ def parser():
     p.add_argument('--port',required=True,help='/dev/ttyACM0 or COM3')
     sub=p.add_subparsers(dest='action',required=True)
     for name in ['status','predict','samples','slots','save']: sub.add_parser(name)
+    dfu=sub.add_parser('enter-dfu')
+    dfu.add_argument('--official',action='store_true',help='send without waiting for ACK: current official firmware resets immediately')
     mode=sub.add_parser('mode'); mode.add_argument('mode',choices=MODES)
     sync=sub.add_parser('sync-time'); sync.add_argument('--timezone',type=int,default=480,help='UTC offset in minutes (default +480)')
     train=sub.add_parser('train'); train.add_argument('slot',type=slot_value); train.add_argument('--source',choices=['environment','reader'],default='environment')
@@ -99,6 +101,14 @@ def parser():
 def execute(client, args):
     action=args.action
     if action=='status': return status_decode(client.request(1100))
+    if action=='enter-dfu':
+        if args.official:
+            packet=frame(1010)
+            if client.transport.write(packet)!=len(packet): raise IOError('incomplete DFU request write')
+            client.transport.flush()
+            return {'dfu_requested':True,'acknowledged':False,'next':'check for the DFU USB port; official firmware resets without an ACK'}
+        client.request(1010)
+        return {'dfu_requested':True,'acknowledged':True,'next':'wait for the DFU USB port, then install the application ZIP'}
     if action=='save': client.request(1107)
     elif action=='mode':
         config=client.config(); config[0]=MODES[args.mode]; client.request(1101,config); client.request(1107)
@@ -130,7 +140,7 @@ def execute(client, args):
         if len(data)%13: raise ValueError('invalid sample response')
         return [dict(slot=data[i]+1,observations=data[i+1],beacons=data[i+2],reader_tokens=data[i+3],field=data[i+4],time_valid=bool(data[i+5]),weekday=data[i+6],minute=struct.unpack_from('>H',data,i+7)[0],order=struct.unpack_from('>I',data,i+9)[0]) for i in range(0,len(data),13)]
     elif action=='slots':
-        data=client.request(1008)
+        data=client.request(1202)
         if len(data)!=25: raise ValueError('invalid slots response')
         return dict(current_slot=data[0]+1,slots=[dict(slot=i+1,enabled=bool(data[1+i*3]),hf_type=data[2+i*3],lf_type=data[3+i*3]) for i in range(8)])
     elif action in ['init-card','import-mf1','import-em410x']:
@@ -152,8 +162,8 @@ def execute(client, args):
             if dump is not None:
                 for start in range(0,len(dump)//16,31):
                     count=min(31,len(dump)//16-start)
-                    client.request(1007,bytes([start,count])+dump[start*16:(start+count)*16])
-            if identity is not None: client.request(1006,identity)
+                    client.request(1201,bytes([start,count])+dump[start*16:(start+count)*16])
+            if identity is not None: client.request(1200,identity)
             client.request(1107)
         except Exception:
             raise RuntimeError('card setup failed; device remains in reader mode to keep partial data off the antenna. Retry the import before using the card.')

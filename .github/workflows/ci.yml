@@ -20,20 +20,29 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - run: python3 -m pip install -r scripts/requirements-dfu.txt
       - run: SANITIZE=1 scripts/test.sh
-      - run: python3 -m py_compile software/script/chameleon_learning.py scripts/build_firmware.py scripts/verify_firmware.py
+      - run: python3 -m py_compile software/script/chameleon_learning.py scripts/build_firmware.py scripts/verify_firmware.py scripts/package_dfu.py scripts/verify_dfu.py
   firmware:
     name: nRF52840 application
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 -m pip install -r scripts/requirements-dfu.txt
       - name: Install ARM GCC and newlib
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi libnewlib-dev
       - run: python3 scripts/build_firmware.py
       - run: python3 scripts/verify_firmware.py build/firmware/chameleon-learning.hex
+      - name: Sign application for the existing official Ultra bootloader
+        run: python3 scripts/package_dfu.py
+      - name: Verify DFU signature, image and Ultra compatibility
+        run: python3 scripts/verify_dfu.py build/firmware/ultra-dfu-app.zip --hex build/firmware/chameleon-learning.hex
       - uses: actions/upload-artifact@v4
         with:
           name: nrf52840-application
@@ -44,6 +53,7 @@ jobs:
             build/firmware/chameleon-learning.bin
             build/firmware/chameleon-learning.elf
             build/firmware/chameleon-learning.map
+            build/firmware/ultra-dfu-app.zip
             build/firmware/manifest.json
             build/firmware/warnings.log
             docs/FLASHING.md
@@ -72,4 +82,17 @@ jobs:
           else
             gh release create "$GITHUB_REF_NAME" --draft --verify-tag --target "$GITHUB_SHA" --title "ChameleonLern $GITHUB_REF_NAME" --notes-file docs/RELEASE.md
           fi
+          gh release edit "$GITHUB_REF_NAME" --draft --notes-file docs/RELEASE.md
           find release-artifacts -type f -print0 | xargs -0 gh release upload "$GITHUB_REF_NAME" --clobber
+      - name: Mark obsolete prototype draft as withdrawn
+        if: github.ref_name == 'v0.1.0-alpha.2'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view v0.1.0-alpha.1 --json isDraft > /tmp/chameleon-prototype.json; then
+            if python3 -c 'import json,sys; sys.exit(0 if json.load(open("/tmp/chameleon-prototype.json"))["isDraft"] else 1)'; then
+              gh release edit v0.1.0-alpha.1 --draft --title "Withdrawn prototype: v0.1.0-alpha.1" --notes-file docs/PROTOTYPE_RELEASE_WITHDRAWN.md
+            fi
+          fi

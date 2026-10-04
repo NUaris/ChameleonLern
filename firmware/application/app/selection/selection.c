@@ -7,12 +7,13 @@
 #include "fds_util.h"
 #include "app_status.h"
 #include "data_cmd.h"
+#include "storage_ids.h"
 #include "app_timer.h"
 #include "app_util_platform.h"
 #include <string.h>
 
-#define MODEL_FILE 0x1070
-#define MODEL_KEY 0x1070
+#define MODEL_FILE CL_MODEL_FILE
+#define MODEL_KEY CL_MODEL_KEY
 #define MANUAL_HOLD_MS 30000u
 #define SWITCH_HOLD_MS 10000u
 #define FIELD_SETTLE_MS 350u

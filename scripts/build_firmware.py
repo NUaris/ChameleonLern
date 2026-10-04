@@ -74,7 +74,7 @@ def main():
     run([objcopy, '-O', 'binary', elf, output / 'chameleon-learning.bin'])
     print(run([cc.with_name('arm-none-eabi-size'), elf]), end='')
     files = ['chameleon-learning.elf', 'chameleon-learning.hex', 'chameleon-learning.bin', 'chameleon-learning.map']
-    manifest = {'commit': run(['git', '-C', ROOT, 'rev-parse', 'HEAD']).strip(), 'dirty': bool(run(['git', '-C', ROOT, 'status', '--porcelain']).strip()), 'compiler': run([cc, '--version']).splitlines()[0], 'target': 'nRF52840 / S140 7.2.0 / application at 0x27000', 'signed': False, 'sha256': {name: hashlib.sha256((output / name).read_bytes()).hexdigest() for name in files}}
+    manifest = {'commit': run(['git', '-C', ROOT, 'rev-parse', 'HEAD']).strip(), 'dirty': bool(run(['git', '-C', ROOT, 'status', '--porcelain']).strip()), 'compiler': run([cc, '--version']).splitlines()[0], 'target': 'Chameleon Ultra HW v1 / nRF52840 / S140 7.2.0 / application at 0x27000', 'signed': False, 'sha256': {name: hashlib.sha256((output / name).read_bytes()).hexdigest() for name in files}}
     (output / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
     print(f'Built {len(sources)} sources in {output}')
 

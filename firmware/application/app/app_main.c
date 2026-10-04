@@ -420,11 +420,11 @@ int main(void)
     NRF_LOG_INFO("NFC TAG & Reader Started!");
     while(1) {
         // Button event process
-        button_press_process();
+        if (!app_cmd_dfu_pending()) button_press_process();
         CRITICAL_REGION_ENTER();
         data_frame_tick(bsp_monotonic_ms());
         CRITICAL_REGION_EXIT();
-        selection_process();
+        if (!app_cmd_dfu_pending()) selection_process();
         usb_cdc_process();
         ble_command_process();
         // Data pack process
@@ -433,6 +433,8 @@ int main(void)
         while(NRF_LOG_PROCESS());
         // USB event process
         while (app_usbd_event_queue_process());
+        app_cmd_process();
+        if (app_cmd_dfu_pending()) continue;
         // No task to process, system sleep enter.
         sleep_system_run(
             system_off_enter,   // If system idle sometime, we can enter deep sleep state.
