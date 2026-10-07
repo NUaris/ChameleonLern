@@ -6,6 +6,21 @@
 #include "fds_util.h"
 #include "rfid_main.h"
 #include "rgb_marquee.h"
+#include "nrf_nfct.h"
+#include "ble_main.h"
+#include "usb_main.h"
+
+extern volatile bool m_is_field_on;
+bool learning_reader_abandoned(void) {
+    return get_device_mode() == DEVICE_MODE_READER && !m_is_field_on &&
+           !is_usb_working() && !is_nus_working();
+}
+
+bool learning_hf_field_present(void) {
+    return get_device_mode() == DEVICE_MODE_TAG &&
+           (nrf_nfct_field_status_get() & NRF_NFCT_FIELD_STATE_PRESENT_MASK) != 0;
+}
+void learning_resume_tag_mode(void) { tag_mode_enter(); }
 
 bool learning_slot_available(uint8_t slot) {
     if (slot >= TAG_MAX_SLOT_NUM) return false;

@@ -1,3 +1,4 @@
+#include "selection.h"
 #include <stdint.h>
 #include "rfid_main.h"
 #include "rgb_marquee.h"
@@ -18,6 +19,7 @@ void reader_mode_enter(void) {
         rfid_state = DEVICE_MODE_READER;
 
         tag_emulation_sense_end();          // to end tag emulation
+        selection_emulation_stopped();
 
         // pin init
         nrf_gpio_cfg_output(LF_ANT_DRIVER);

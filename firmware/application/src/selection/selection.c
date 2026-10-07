@@ -30,20 +30,49 @@ static uint32_t last_session_ms, switched_since, last_prediction, last_save;
 static uint32_t switch_count;
 static bool have_session, switch_hold, dirty, save_error;
 static volatile bool manual_latched, manual_session, manual_completed;
+static bool pending_tag_mode;
 static volatile uint8_t manual_target = SEL_NONE;
 static sel_prediction_t prediction;
+/* Official System OFF retains the .noinit RAM region. Do not add a flash
+ * write on every A/B press just to preserve a pending choice across sleep. */
+#if defined(__arm__) || defined(__thumb__)
+__attribute__((section(".noinit_selection")))
+#endif
+static struct { uint32_t magic, slot, inverse; } retained_hold;
+#define HOLD_MAGIC 0x434C4832u
+
+void selection_restore_manual_hold(bool sleep_wakeup) {
+    manual_latched = manual_session = manual_completed = false;
+    manual_target = pending_slot = SEL_NONE; pending_tag_mode = false;
+    if (sleep_wakeup && retained_hold.magic == HOLD_MAGIC &&
+        retained_hold.inverse == ~retained_hold.slot && retained_hold.slot < SEL_SLOTS &&
+        retained_hold.slot == tag_emulation_get_slot() && learning_slot_available(retained_hold.slot)) {
+        manual_target = (uint8_t)retained_hold.slot; manual_latched = true;
+    }
+    retained_hold.magic = 0;
+}
 
 static uint16_t read16(const uint8_t *p) { return (uint16_t)((uint16_t)p[0] << 8 | p[1]); }
 static uint32_t read32(const uint8_t *p) { return (uint32_t)read16(p) << 16 | read16(p + 2); }
 static void write16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)(v >> 8); p[1] = (uint8_t)v; }
 static void write32(uint8_t *p, uint32_t v) { write16(p, (uint16_t)(v >> 16)); write16(p + 2, (uint16_t)v); }
 
-bool selection_field_active(void) { return hf_field || lf_field; }
-bool selection_background_enabled(void) { return model.config.mode != SEL_OFF; }
+bool selection_field_active(void) { return hf_field || lf_field || learning_hf_field_present(); }
+
+bool selection_prepare_sleep(bool forced) {
+    ble_environment_pause();
+    if (selection_field_active() && !forced) return false;
+    if (!selection_save() && !forced) return false;
+    retained_hold.slot = manual_latched ? manual_target : SEL_NONE;
+    retained_hold.inverse = ~retained_hold.slot;
+    retained_hold.magic = HOLD_MAGIC;
+    return true;
+}
 
 void selection_field_event(uint8_t field, bool present) {
     uint32_t now = bsp_monotonic_ms();
-    if (present && !selection_field_active() && manual_latched && pending_slot == SEL_NONE &&
+    if (present) ble_environment_pause();
+    if (present && !hf_field && !lf_field && manual_latched && pending_slot == SEL_NONE &&
         tag_emulation_get_slot() == manual_target) manual_session = true;
     if (field == 2) {
         hf_field = present;
@@ -55,6 +84,17 @@ void selection_field_event(uint8_t field, bool present) {
     if (!selection_field_active() && manual_session) manual_completed = true;
     last_field_change = now;
     g_is_tag_emulating = selection_field_active();
+}
+
+void selection_emulation_stopped(void) {
+    /* Disabling NFCT/LPCOMP does not guarantee a FIELD_LOST callback.
+     * A host mode change aborts that exchange; it is not a learned success. */
+    CRITICAL_REGION_ENTER();
+    hf_field = lf_field = session_pending = false;
+    reader_count = 0; manual_session = manual_completed = false;
+    g_is_tag_emulating = false;
+    last_field_change = bsp_monotonic_ms();
+    CRITICAL_REGION_EXIT();
 }
 
 void selection_reader_command(uint8_t kind, uint8_t parameter) {
@@ -134,9 +174,9 @@ bool selection_save(void) {
     return result;
 }
 
-bool selection_manual_slot(uint8_t slot) {
+static bool manual_slot(uint8_t slot, bool restore_tag_mode) {
     if (slot >= SEL_SLOTS || !learning_slot_available(slot)) return false;
-    pending_slot = slot;
+    pending_slot = slot; pending_tag_mode = restore_tag_mode;
     manual_target = slot; manual_latched = true; manual_session = false; manual_completed = false;
     if (model.config.mode != SEL_OFF && get_device_mode() == DEVICE_MODE_TAG) {
         sel_context_t c = snapshot(false);
@@ -145,12 +185,14 @@ bool selection_manual_slot(uint8_t slot) {
     return true;
 }
 
+bool selection_manual_slot(uint8_t slot) { return manual_slot(slot, true); }
+
 bool selection_management_slot(uint8_t slot) {
-    if (learning_slot_available(slot)) return selection_manual_slot(slot);
+    if (learning_slot_available(slot)) return manual_slot(slot, false);
     /* GUI selects an empty slot before uploading its card. Do not learn an
      * empty identity, and keep the ordinary field interlock for this path. */
     if (!learning_select_empty_slot(slot)) return false;
-    pending_slot = SEL_NONE;
+    pending_slot = SEL_NONE; pending_tag_mode = false;
     manual_target = slot; manual_latched = true; manual_session = false; manual_completed = false;
     learning_refresh_slot();
     return true;
@@ -159,6 +201,9 @@ bool selection_management_slot(uint8_t slot) {
 void selection_process(void) {
     uint32_t now = bsp_monotonic_ms();
     sel_clock_update(&clock_state, now);
+    /* Closing the last GUI/CLI connection must leave a standalone card,
+     * rather than reader hardware with the tag antenna disconnected. */
+    if (learning_reader_abandoned()) learning_resume_tag_mode();
     if (session_pending) {
         sel_context_t c = snapshot(false);
         CRITICAL_REGION_ENTER();
@@ -177,10 +222,13 @@ void selection_process(void) {
     if ((uint32_t)(now - last_field_change) < FIELD_SETTLE_MS) return;
     if (pending_slot != SEL_NONE) {
         uint8_t slot = pending_slot;
-        if (learning_change_slot(slot, get_device_mode() == DEVICE_MODE_TAG)) {
-            learning_refresh_slot();
-        }
-        pending_slot = SEL_NONE;
+        if (!learning_change_slot(slot, get_device_mode() == DEVICE_MODE_TAG)) return;
+        /* A/B is a request to emulate. Load the card before reconnecting
+         * the tag antenna; GUI slot management keeps its mode. */
+        bool restore_tag = pending_tag_mode;
+        pending_tag_mode = false; pending_slot = SEL_NONE;
+        if (restore_tag) learning_resume_tag_mode();
+        learning_refresh_slot();
     }
     if (manual_completed) {
         /* An explicit choice labels the completed interaction, never an automatic prediction. */

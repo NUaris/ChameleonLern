@@ -26,7 +26,7 @@ def main():
     if result.returncode:raise RuntimeError(result.stdout)
     for ext,name in [('out','elf'),('hex','hex'),('bin','bin'),('map','map')]:shutil.copyfile(build/f'application.{ext}',dest/f'chameleon-learning.{name}')
     names=['chameleon-learning.'+ext for ext in ('elf','hex','bin','map')]
-    manifest={'commit':output(['git','-C',ROOT,'rev-parse','HEAD']),'dirty':bool(output(['git','-C',ROOT,'status','--porcelain'])),'upstream_commit':UPSTREAM,'version':'ChameleonLern-v0.2.0-alpha.1','compiler':output([cc,'--version']).splitlines()[0],'target':'Chameleon Ultra HW v1 / nRF52840 / S140 7.2.0 / application at 0x27000','signed':False,'sha256':{n:hashlib.sha256((dest/n).read_bytes()).hexdigest() for n in names}}
+    manifest={'commit':output(['git','-C',ROOT,'rev-parse','HEAD']),'dirty':bool(output(['git','-C',ROOT,'status','--porcelain'])),'upstream_commit':UPSTREAM,'version':'ChameleonLern-v0.2.0-alpha.2','compiler':output([cc,'--version']).splitlines()[0],'target':'Chameleon Ultra HW v1 / nRF52840 / S140 7.2.0 / application at 0x27000','signed':False,'sha256':{n:hashlib.sha256((dest/n).read_bytes()).hexdigest() for n in names}}
     (dest/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
     print(output([cc.with_name('arm-none-eabi-size'),dest/'chameleon-learning.elf']))
     print('Built official firmware plus learning extension at',dest)

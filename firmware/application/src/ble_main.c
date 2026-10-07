@@ -831,10 +831,20 @@ void unregister_lf_adc_callback(void) {
 }
 
 bool ble_environment_active(void) { return scan_active; }
+void ble_environment_pause(void) {
+    /* Field callbacks run at an application IRQ priority that permits SVCs.
+     * Prevent a queued advertising report from restarting the scanner. */
+    if (scan_active) {
+        scan_active = false;
+        (void)sd_ble_gap_scan_stop();
+    }
+}
 void ble_environment_process(bool enabled, uint16_t period_ms, uint16_t window_ms) {
+    /* Recheck here: a field IRQ may have run after the caller took its snapshot. */
+    if (selection_field_active()) enabled = false;
     uint32_t now = bsp_monotonic_ms();
     if ((!enabled || (uint32_t)(now - scan_since) >= window_ms) && scan_active) {
-        (void)sd_ble_gap_scan_stop(); scan_active = false;
+        ble_environment_pause();
     }
     if (!enabled || scan_active || (scan_started && (uint32_t)(now - scan_since) < period_ms)) return;
     ble_gap_scan_params_t params = {0};
@@ -843,4 +853,5 @@ void ble_environment_process(bool enabled, uint16_t period_ms, uint16_t window_m
     scan_buffer.len = sizeof(scan_bytes);
     ret_code_t result = sd_ble_gap_scan_start(&params, &scan_buffer);
     scan_since = now; scan_started = true; scan_active = result == NRF_SUCCESS;
+    if (selection_field_active()) ble_environment_pause();
 }

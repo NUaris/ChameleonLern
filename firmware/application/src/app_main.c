@@ -288,8 +288,10 @@ static void button_init(void) {
  */
 static void system_off_enter(void) {
     ret_code_t ret;
-    if (selection_background_enabled() || selection_field_active()) return;
-    if (!selection_save()) { sleep_timer_start(2000); return; }
+    if (!selection_prepare_sleep(g_is_low_battery_shutdown)) {
+        sleep_timer_start(2000);
+        return;
+    }
     m_system_off_processing = true;
     // Save tag data
     tag_emulation_save();
@@ -449,7 +451,10 @@ static void check_wakeup_src(void) {
 
     sd_power_gpregret_get(1, &m_gpregret_val);
     sd_power_gpregret_clr(1, GPREGRET_CLEAR_VALUE_DEFAULT);
-
+    selection_restore_manual_hold(
+        (m_reset_source & (NRF_POWER_RESETREAS_OFF_MASK | NRF_POWER_RESETREAS_NFC_MASK |
+                           NRF_POWER_RESETREAS_LPCOMP_MASK)) ||
+        (m_gpregret_val & RESET_ON_LF_FIELD_EXISTS_Msk));
 
     /*
      * Note: The hibernation described below is deep hibernation, stopping any non-wakeup source peripherals and stopping the CPU to achieve the lowest power consumption

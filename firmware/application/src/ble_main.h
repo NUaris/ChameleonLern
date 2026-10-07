@@ -23,5 +23,6 @@ void register_lf_adc_callback(lf_adc_callback_t cb);
 void unregister_lf_adc_callback(void);
 
 bool ble_environment_active(void);
+void ble_environment_pause(void);
 void ble_environment_process(bool enabled, uint16_t period_ms, uint16_t window_ms);
 #endif

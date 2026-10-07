@@ -19,7 +19,9 @@
     "firmware/application/src/rfid/nfctag/hf/nfc_14a.c",
     "firmware/application/src/rfid/nfctag/hf/nfc_mf1.c",
     "firmware/application/src/rfid/nfctag/lf/lf_tag_em.c",
+    "firmware/application/src/rfid_main.c",
     "firmware/application/src/sdk_config.h",
+    "firmware/application/src/usb_main.c",
     "firmware/application/src/utils/fds_util.c",
     "firmware/common/device_info.h"
   ],

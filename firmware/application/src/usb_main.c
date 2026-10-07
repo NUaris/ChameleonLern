@@ -111,6 +111,7 @@ static void usbd_user_ev_handler(app_usbd_event_type_t event) {
             break;
 
         case APP_USBD_EVT_POWER_REMOVED:
+            g_usb_port_opened = false;
             sleep_timer_start(SLEEP_DELAY_MS_USB_POWER_DISCONNECTED);
             NRF_LOG_INFO("USB power removed");
             g_usb_connected = false;
@@ -178,5 +179,5 @@ int fputc(int ch, FILE *f){
 */
 
 bool is_usb_working(void) {
-    return g_usb_port_opened;
+    return g_usb_port_opened && g_usb_connected;
 }

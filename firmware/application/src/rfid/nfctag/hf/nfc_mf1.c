@@ -591,7 +591,6 @@ void nfc_tag_mf1_state_handler(uint8_t *p_data, uint16_t szDataBits) {
                     switch (p_data[0]) {
                         case CMD_AUTH_A:
                         case CMD_AUTH_B: {
-                            selection_reader_command(p_data[0] == CMD_AUTH_A ? 4 : 5, p_data[1]);
                             uint8_t BlockAuth = p_data[1];
                             uint8_t CardNonce[4];
 
@@ -667,6 +666,7 @@ void nfc_tag_mf1_state_handler(uint8_t *p_data, uint16_t szDataBits) {
 #endif
                             // Responsible for clear -scale random number to read the card reader
                             nfc_tag_14a_tx_bytes(m_tag_tx_buffer.tx_raw_buffer, 4, false);
+                            selection_reader_command(KeyInUse ? 5 : 4, BlockAuth);
                             break;
                         }
                         case CMD_READ: {
@@ -951,7 +951,6 @@ void nfc_tag_mf1_state_handler(uint8_t *p_data, uint16_t szDataBits) {
                         }
                         case CMD_AUTH_A:
                         case CMD_AUTH_B: {
-                            selection_reader_command(p_data[0] == CMD_AUTH_A ? 4 : 5, p_data[1]);
                             // The second verification request when it has been encrypted is the process of nested verification
                             uint8_t BlockAuth = p_data[1];
                             uint8_t CardNonce[4];
@@ -1037,6 +1036,7 @@ void nfc_tag_mf1_state_handler(uint8_t *p_data, uint16_t szDataBits) {
                             // In the case of nested verification, after the frame is set up, a encrypted random number is replied, and the puppet school inspection does not bring CRC
                             m_tag_tx_buffer.tx_frame_bit_size = nfc_tag_14a_wrap_frame(m_tag_tx_buffer.tx_raw_buffer, 32, m_tag_tx_buffer.tx_bit_parity, m_tag_tx_buffer.tx_warp_frame);
                             nfc_tag_14a_tx_bits(m_tag_tx_buffer.tx_warp_frame, m_tag_tx_buffer.tx_frame_bit_size);
+                            selection_reader_command(KeyInUse ? 5 : 4, BlockAuth);
                             break;
                         }
                         case CMD_HALT: {

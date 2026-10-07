@@ -1,10 +1,12 @@
 # Ultra 安装、迁移与验收
 
-v0.2.0-alpha.1 已根据 2026-10-07 最新官方基准同步，目标为量产 Chameleon Ultra HW v1 / nRF52840 / S140 7.2.0。签名 ZIP 只更新应用，不更换引导程序／SoftDevice，不擦除 FDS。Lite、旧原型机和更换了公钥的引导程序不适用。
+alpha.2 已修复 A/B／管理连接关闭后恢复模拟和 AUTO 空闲休眠。本次只构建并推送，未烧录验证；后续实机验收应检查外部读卡器、无 USB／BLE 的休眠、RF 唤醒及跨休眠手动锁定。
+
+v0.2.0-alpha.2 沿用 alpha.1 同步的 2026-10-07 官方基准，目标为量产 Chameleon Ultra HW v1 / nRF52840 / S140 7.2.0。签名 ZIP 只更新应用，不更换引导程序／SoftDevice，不擦除 FDS。Lite、旧原型机和更换了公钥的引导程序不适用。
 
 ## 安装
 
-1. 保存自己的卡片 dump、LF ID、昵称、启用状态、防冲撞参数和配置，并保留可刷回的应用 ZIP。从 alpha.2／alpha.3 升级需先导出其私有卡片数据，再按现行官方协议导入；旧私有记录仍保留，但不会自动解释成官方记录。CLRN 学习模型格式保持不变。
+1. 保存自己的卡片 dump、LF ID、昵称、启用状态、防冲撞参数和配置，并保留可刷回的应用 ZIP。从 v0.1.0-alpha.2／alpha.3 升级需先导出其私有卡片数据，再按现行官方协议导入；旧私有记录仍保留，但不会自动解释成官方记录。CLRN 学习模型格式保持不变。
 2. 使用本次构建的 `ultra-dfu-app.zip`，核对同一 manifest 的 SHA256。HEX／BIN 不含 DFU 签名，不能当作应用 ZIP。
 3. 用当前 GUI／CLI 进入 DFU，或按官方按键流程进入。学习 CLI 支持 `enter-dfu`；对立即复位且无 ACK 的旧官方应用使用 `enter-dfu --official`。
 4. 使用 Nordic nrfutil 或支持本地 ZIP 的工具烧录：`nrfutil device program --firmware ultra-dfu-app.zip --traits nordicDfu`。

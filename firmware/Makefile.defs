@@ -26,7 +26,7 @@ CHAMELEON_LITE  := lite
 CURRENT_DEVICE_TYPE ?= ${CHAMELEON_ULTRA}
 
 # Versioning information
-GIT_VERSION := ChameleonLern-v0.2.0-alpha.1+upstream-5c99d4a
+GIT_VERSION := ChameleonLern-v0.2.0-alpha.2+upstream-5c99d4a
 APP_FW_SEMVER := $(subst v,,$(shell git describe --tags --abbrev=0 --match "v*.*"))
 APP_FW_VER_MAJOR := 2
 APP_FW_VER_MINOR := 2

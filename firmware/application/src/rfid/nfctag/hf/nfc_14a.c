@@ -343,7 +343,7 @@ void nfc_tag_14a_set_frame_delay_max(uint32_t max_ticks) {
 /**
  * 14A monitoring the packaging function of data processing from PCD
  */
-void nfc_tag_14a_data_process(uint8_t *p_data) {
+static void nfc_tag_14a_respond(uint8_t *p_data, uint8_t *learning_kind, uint8_t *learning_parameter) {
     // Compute the number of bits currently received
     uint16_t szDataBits = (NRF_NFCT->RXD.AMOUNT & (NFCT_RXD_AMOUNT_RXDATABITS_Msk | NFCT_RXD_AMOUNT_RXDATABYTES_Msk));
     // The resource that may be used in anti -collision
@@ -374,14 +374,15 @@ void nfc_tag_14a_data_process(uint8_t *p_data) {
     }
 #endif
 
-    if (szDataBits == 7 && (p_data[0] == NFC_TAG_14A_CMD_REQA || p_data[0] == NFC_TAG_14A_CMD_WUPA))
-        selection_reader_command(1, p_data[0] == NFC_TAG_14A_CMD_WUPA);
-    if (m_tag_state_14a == NFC_TAG_STATE_14A_READY && szDataBits >= 16 &&
-        (p_data[0] == 0x93 || p_data[0] == 0x95 || p_data[0] == 0x97))
-        selection_reader_command(2, (uint8_t)(((p_data[0] & 15) << 4) | (p_data[1] >> 4)));
-    if (m_tag_state_14a == NFC_TAG_STATE_14A_ACTIVE && szDataBits == 32 &&
-        p_data[0] == NFC_TAG_14A_CMD_RATS && nfc_tag_14a_checks_crc(p_data, 4))
-        selection_reader_command(6, p_data[1]);
+    if (szDataBits == 7 && (p_data[0] == NFC_TAG_14A_CMD_REQA || p_data[0] == NFC_TAG_14A_CMD_WUPA)) {
+        *learning_kind = 1; *learning_parameter = p_data[0] == NFC_TAG_14A_CMD_WUPA;
+    } else if (m_tag_state_14a == NFC_TAG_STATE_14A_READY && szDataBits >= 16 &&
+               (p_data[0] == 0x93 || p_data[0] == 0x95 || p_data[0] == 0x97)) {
+        *learning_kind = 2; *learning_parameter = (uint8_t)(((p_data[0] & 15) << 4) | (p_data[1] >> 4));
+    } else if (m_tag_state_14a == NFC_TAG_STATE_14A_ACTIVE && szDataBits == 32 &&
+               p_data[0] == NFC_TAG_14A_CMD_RATS) {
+        *learning_kind = 6; *learning_parameter = p_data[1];
+    }
 
     // Start processing the received data, if it is a special frame, you can hand over the data to this link
     if (szDataBits <= 8) {
@@ -609,6 +610,14 @@ void nfc_tag_14a_data_process(uint8_t *p_data) {
     }
 }
 
+void nfc_tag_14a_data_process(uint8_t *p_data) {
+    uint8_t kind = 0, parameter = 0;
+    nfc_tag_14a_respond(p_data, &kind, &parameter);
+    /* Response setup and Crypto1 always precede the learning clock read. */
+    if (kind && (kind != 6 || nfc_tag_14a_checks_crc(p_data, 4)))
+        selection_reader_command(kind, parameter);
+}
+
 // Copy from nrf_nfct.c and modified for nrf52840 adapted(no verify on nrf52832)
 static inline void nrf_nfct_reset(void) {
     uint32_t fdm;
@@ -664,7 +673,6 @@ void nfc_tag_14a_event_callback(nrfx_nfct_evt_t const *p_event) {
             sleep_timer_stop();
 
             g_is_tag_emulating = true;
-    selection_field_event(2, true);
             g_usb_led_marquee_enable = false;
 
             set_slot_light_color(RGB_GREEN);
@@ -684,11 +692,12 @@ void nfc_tag_14a_event_callback(nrfx_nfct_evt_t const *p_event) {
 
             //Directly enable receiving
             NRFX_NFCT_RX_BYTES
+            selection_field_event(2, true);
             break;
         }
         case NRFX_NFCT_EVT_FIELD_LOST: {
             g_is_tag_emulating = false;
-    selection_field_event(2, false);
+            selection_field_event(2, false);
             // call sleep_timer_start *after* unsetting g_is_tag_emulating
             sleep_timer_start(SLEEP_DELAY_MS_FIELD_NFC_LOST);
 
