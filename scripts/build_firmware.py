@@ -15,7 +15,7 @@ def main():
     a=p.parse_args();cc=Path(shutil.which(a.cc) or a.cc).resolve()
     if not cc.is_file():p.error('Install ARM GCC, binutils and newlib, or set ARM_CC')
     dest=a.output.resolve();dest.mkdir(parents=True,exist_ok=True);build=dest/'official'
-    command=['make','-C',ROOT/'firmware/application',f'-j{max(1,a.j)}',f'GNU_INSTALL_ROOT={cc.parent}/',f'GNU_VERSION={output([cc,"-dumpfullversion"])}',f'OUTPUT_DIRECTORY={build}','EXTRA_CFLAGS=-Wno-error']
+    command=['make','--no-print-directory','-C',ROOT/'firmware/application',f'-j{max(1,a.j)}',f'GNU_INSTALL_ROOT={cc.parent}/',f'GNU_VERSION={output([cc,"-dumpfullversion"])}',f'OUTPUT_DIRECTORY={build}','EXTRA_CFLAGS=-Wno-error']
     newlib=cc.parent.parent/'lib/arm-none-eabi/newlib/thumb/v7e-m+fp/hard'
     if newlib.is_dir():
         command[-1]=f'EXTRA_CFLAGS=-Wno-error -I{cc.parent.parent / "include/newlib"}'

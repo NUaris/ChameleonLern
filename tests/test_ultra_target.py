@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-only
-import hashlib,json,re,unittest
+import hashlib,json,re,subprocess,unittest
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 class Tests(unittest.TestCase):
     def test_upstream_sync_integrity(self):
         reference=json.loads((ROOT/'docs/UPSTREAM_SYNC.json').read_text())
         patches=set(reference['local_patches'])
+        tracked=set(subprocess.check_output(['git','-C',str(ROOT),'ls-files','--cached'],text=True).splitlines())
+        self.assertTrue(set(reference['files'])<=tracked, 'Upstream files must be committed, including ignored paths')
         self.assertEqual(reference['commit'],'5c99d4a39b424cc67ae82bbcfc8ba5ec8f69bf9c')
         for path,expected in reference['files'].items():
             if path in patches: continue
