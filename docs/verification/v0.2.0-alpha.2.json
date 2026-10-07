@@ -1,0 +1,56 @@
+{
+  "date": "2026-10-08",
+  "version": "ChameleonLern-v0.2.0-alpha.2",
+  "source_commit": "4ac90ced23cd6d60f485ec992b06c5eb73a1ecf0",
+  "upstream_commit": "5c99d4a39b424cc67ae82bbcfc8ba5ec8f69bf9c",
+  "flashed": true,
+  "external_reader_hardware_verified": true,
+  "system_off_hardware_verified": false,
+  "host_c_test_programs_passed": 3,
+  "python_unit_tests_passed": 29,
+  "local_sanitizer": "undefined",
+  "arm_build": "passed",
+  "hex_regions_and_dfu_signature": "passed",
+  "manual_hold_retention_region": "0x20038000, 12 bytes in official .noinit RAM",
+  "dfu_zip_sha256": "60820446586ee01b9fdcc023e1ae706890cc366467de58b39f02f10ffd3ba4e0",
+  "ci_url": "https://github.com/NUaris/ChameleonLern/actions/runs/37651251082",
+  "ci_host_tests_and_asan_ubsan": "success",
+  "ci_arm_build_and_dfu_verification": "success",
+  "flash_transport": "usb_nordic_dfu",
+  "device_verification": {
+    "transport": "usb",
+    "timestamp_utc": "2026-10-07T17:51:01.890628+00:00",
+    "card_slots_verified": [
+      1,
+      2
+    ],
+    "firmware_version": "ChameleonLern-v0.2.0-alpha.2+upstream-5c99d4a",
+    "ultra_identification_verified": true,
+    "learning_samples_after_flash": 6,
+    "card_data_and_settings_match_pre_flash_backup": true,
+    "configured_sleep_timeout_seconds": 8,
+    "learning_samples_unchanged_during_verification": true,
+    "learning_mode": "auto",
+    "active_slot": 1,
+    "eligible_slots": [
+      1,
+      2
+    ],
+    "device_mode": "tag",
+    "reader_mode_returns_to_tag_after_host_disconnect": true
+  },
+  "external_reader_verification_source": "user_report",
+  "automatic_sleep_user_reported_passed": true,
+  "user_hardware_feedback": {
+    "date": "2026-10-08",
+    "statement": "目前测试没有问题",
+    "checks_requested_before_feedback": [
+      "external reader card emulation",
+      "automatic idle sleep with USB disconnected"
+    ],
+    "source": "user report following the flash and USB verification",
+    "sleep_current_measured": false,
+    "multi_reader_long_term_test_completed": false
+  },
+  "publication_note": "Firmware built from source commit 4ac90ced23cd6d60f485ec992b06c5eb73a1ecf0; subsequent publication commit changes documentation and this verification record only."
+}
