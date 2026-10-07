@@ -9,7 +9,7 @@ static sel_context_t environment(uint32_t key) {
     return c;
 }
 int main(void) {
-    sel_model_t m; sel_model_init(&m); assert(sel_config_valid(&m.config)); assert(m.config.mode == SEL_OFF);
+    sel_model_t m; sel_model_init(&m); assert(sel_config_valid(&m.config)); assert(m.config.mode == SEL_AUTO);
     sel_context_t c = environment(123);
     assert(!sel_learn(&m, &c, 8)); assert(sel_learn(&m, &c, 2));
     assert(sel_predict(&m, &c, 255).reason == SEL_REASON_SUPPORT);

@@ -73,9 +73,9 @@ class Tests(unittest.TestCase):
             p=Path(folder)/'card.bin';p.write_bytes(bytes(range(256))*16)
             args=cli.parser().parse_args(['--port','fake','import-mf1','8',str(p)])
             device=FakeDevice();cli.execute(device,args)
-            blocks=[payload for command,payload in device.calls if command==1201]
-            self.assertEqual(b''.join(x[2:] for x in blocks),p.read_bytes());self.assertTrue(all(len(x)<=512 for x in blocks));self.assertEqual(device.mode,0)
-            device=FakeDevice();device.fail=1201
+            blocks=[payload for command,payload in device.calls if command==4000]
+            self.assertEqual(b''.join(x[1:] for x in blocks),p.read_bytes());self.assertTrue(all(len(x)<=512 for x in blocks));self.assertEqual(device.mode,0)
+            device=FakeDevice();device.fail=4000
             with self.assertRaisesRegex(RuntimeError,'reader mode'):cli.execute(device,args)
             self.assertEqual(device.mode,1)
     def test_slots_bounds(self):

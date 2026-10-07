@@ -1,3 +1,11 @@
+# 当前上游同步基准
+
+v0.2.0-alpha.1 已完整同步官方 ChameleonUltra 的 firmware 与 software 至 2026-10-07 main 提交 [5c99d4a39b424cc67ae82bbcfc8ba5ec8f69bf9c](https://github.com/RfidResearchGroup/ChameleonUltra/commit/5c99d4a39b424cc67ae82bbcfc8ba5ec8f69bf9c)。逐文件上游 Git blob SHA 与自定义补丁清单见 UPSTREAM_SYNC.json。生产构建不再使用下面的历史工程；历史记录保留以追溯 alpha.2／alpha.3 的修正。
+
+本项目新增学习模块、被动 BLE 扫描、有场互锁及手动选择钩子；保留现有官方引导程序、S140 7.2.0、22 个 FDS 页和 RAM 保留边界。SDK／官方读卡器／灯效未作替代实现。FDS 成功读取后关闭打开记录，以免反复读模型阻碍垃圾回收。
+
+---
+
 # 量产 Ultra 与官方 DFU 的兼容性依据
 
 本项目从 2022 年历史代码派生，没有全量同步官方。alpha.2 的量产硬件和升级配置按官方提交 [`6d92a9ff1a56f93efbcaca10f547eee0a3dd6791`](https://github.com/RfidResearchGroup/ChameleonUltra/commit/6d92a9ff1a56f93efbcaca10f547eee0a3dd6791) 核对，记录于 2026-10-04 UTC。以下验证属于源码／构建验证，尚未进行实体设备验证。

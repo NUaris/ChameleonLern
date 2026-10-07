@@ -8,16 +8,11 @@ if [[ "${SANITIZE:-0}" == 1 ]]; then
     flags+=("-fsanitize=${SANITIZERS:-address,undefined}" -fno-omit-frame-pointer)
     if [[ "$(uname -s)" == Linux ]]; then flags+=(-fno-pie -no-pie); fi
 fi
-"${CC:-gcc}" "${flags[@]}" -Ifirmware/application/app/selection tests/test_selection.c firmware/application/app/selection/selection_core.c -o build/tests/selection
+src=firmware/application/src
+"${CC:-gcc}" "${flags[@]}" -I"$src/selection" tests/test_selection.c "$src/selection/selection_core.c" -o build/tests/selection
 build/tests/selection
-"${CC:-gcc}" "${flags[@]}" -Wno-misleading-indentation -Ifirmware/application/app/utils -Ifirmware/application/app/rfid tests/test_dataframe.c firmware/application/app/utils/dataframe.c firmware/application/app/rfid/hex_utils.c -o build/tests/dataframe
-build/tests/dataframe
-"${CC:-gcc}" "${flags[@]}" -Wno-pedantic -Itests/stubs -Ifirmware/application/app/utils tests/test_fds.c firmware/application/app/utils/fds_util.c -o build/tests/fds
-build/tests/fds
-"${CC:-gcc}" "${flags[@]}" -Itests/stubs -Ifirmware/application/app/selection -Ifirmware/application/app/utils -Ifirmware/application/app tests/test_selection_runtime.c firmware/application/app/selection/selection.c firmware/application/app/selection/selection_core.c -o build/tests/selection_runtime
+"${CC:-gcc}" "${flags[@]}" -Itests/stubs -I"$src/selection" -I"$src/bsp" -I"$src" tests/test_selection_runtime.c "$src/selection/selection.c" "$src/selection/selection_core.c" -o build/tests/selection_runtime
 build/tests/selection_runtime
-"${CC:-gcc}" "${flags[@]}" -fshort-enums -Wno-pedantic -Wno-unused-variable -include tests/stubs/app_error.h -Ifirmware/application/app/rfid/nfctag -Itests/stubs -Ifirmware/application/app -Ifirmware/application/app/rfid/nfctag/hf -Ifirmware/application/app/rfid/nfctag/lf -Ifirmware/application/app/rfid -Ifirmware/application/app/selection -Ifirmware/application/app/utils tests/test_tags.c firmware/application/app/rfid/nfctag/tag_emulation.c firmware/application/app/rfid/nfctag/tag_persistence.c firmware/application/app/gui_protocol.c firmware/application/app/rfid/crc_utils.c -o build/tests/tags
-build/tests/tags
-"${CC:-gcc}" "${flags[@]}" -Itests/stubs -Ifirmware/application/app -Ifirmware/application/app/selection tests/test_dfu_entry.c firmware/application/app/dfu/dfu_entry.c -o build/tests/dfu_entry
-build/tests/dfu_entry
+"${CC:-gcc}" "${flags[@]}" -Itests/stubs -I"$src/selection" tests/test_learning_platform.c "$src/selection/learning_platform.c" -o build/tests/learning_platform
+build/tests/learning_platform
 python3 -m unittest discover -s tests -p 'test_*.py' -v

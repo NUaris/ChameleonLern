@@ -10,7 +10,7 @@ import time
 
 MODES = {'off': 0, 'observe': 1, 'auto': 2}
 REASONS = ['off', 'empty', 'no_context', 'low_score', 'ambiguous', 'need_feedback', 'manual_hold', 'field_active', 'cooldown', 'ready', 'keep', 'invalid_slot']
-ERRORS = {0x60:'invalid parameters', 0x66:'wrong device mode', 0x67:'invalid command', 0x6a:'reader field active / busy', 0x6b:'storage failed', 0x6c:'no usable context; scan first or provide recent reader feedback'}
+ERRORS = {0x60:'invalid parameters', 0x66:'wrong device mode', 0x67:'invalid command', 0x6a:'reader field active / busy', 0x6b:'storage failed', 0x70:'storage failed', 0x6c:'no usable context; scan first or provide recent reader feedback'}
 
 def frame(command, payload=b''):
     if len(payload) > 512: raise ValueError('payload exceeds 512 bytes')
@@ -140,30 +140,30 @@ def execute(client, args):
         if len(data)%13: raise ValueError('invalid sample response')
         return [dict(slot=data[i]+1,observations=data[i+1],beacons=data[i+2],reader_tokens=data[i+3],field=data[i+4],time_valid=bool(data[i+5]),weekday=data[i+6],minute=struct.unpack_from('>H',data,i+7)[0],order=struct.unpack_from('>I',data,i+9)[0]) for i in range(0,len(data),13)]
     elif action=='slots':
-        data=client.request(1202)
-        if len(data)!=25: raise ValueError('invalid slots response')
-        return dict(current_slot=data[0]+1,slots=[dict(slot=i+1,enabled=bool(data[1+i*3]),hf_type=data[2+i*3],lf_type=data[3+i*3]) for i in range(8)])
+        data=client.request(1019); enabled=client.request(1023); current=client.request(1018)
+        if len(data)!=32 or len(enabled)!=16 or len(current)!=1: raise ValueError('invalid slots response')
+        return dict(current_slot=current[0]+1,slots=[dict(slot=i+1,enabled_hf=bool(enabled[i*2]),enabled_lf=bool(enabled[i*2+1]),hf_type=struct.unpack_from('>H',data,i*4)[0],lf_type=struct.unpack_from('>H',data,i*4+2)[0]) for i in range(8)])
     elif action in ['init-card','import-mf1','import-em410x']:
         # Validate inputs before modifying the device. Readers cannot see a partially imported card.
         dump=None; identity=None
         if action=='import-mf1':
-            dump=args.file.read_bytes(); types={320:2,1024:3,2048:4,4096:5}
+            dump=args.file.read_bytes(); types={320:1000,1024:1001,2048:1002,4096:1003}
             if len(dump) not in types: raise ValueError('raw MIFARE dump must be 320/1024/2048/4096 bytes')
             tag_type=types[len(dump)]
         elif action=='import-em410x':
             identity=bytes.fromhex(args.id)
             if len(identity)!=5: raise ValueError('EM410x ID must contain five bytes')
-            tag_type=1
-        else: tag_type={'em410x':1,'mini':2,'1k':3,'2k':4,'4k':5}[args.type]
-        # 1001 is a legacy command whose success status is zero.
+            tag_type=100
+        else: tag_type={'em410x':100,'mini':1000,'1k':1001,'2k':1002,'4k':1003}[args.type]
+        # Accept old mode replies during migration; new firmware uses the official status.
         original=client.request_mode(1)
         try:
-            client.request(1005,bytes([args.slot,tag_type])); client.select(args.slot)
+            client.request(1005,struct.pack('>BH',args.slot,tag_type)); client.select(args.slot)
             if dump is not None:
                 for start in range(0,len(dump)//16,31):
                     count=min(31,len(dump)//16-start)
-                    client.request(1201,bytes([start,count])+dump[start*16:(start+count)*16])
-            if identity is not None: client.request(1200,identity)
+                    client.request(4000,bytes([start])+dump[start*16:(start+count)*16])
+            if identity is not None: client.request(5000,identity)
             client.request(1107)
         except Exception:
             raise RuntimeError('card setup failed; device remains in reader mode to keep partial data off the antenna. Retry the import before using the card.')

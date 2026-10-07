@@ -26,17 +26,25 @@ jobs:
   firmware:
     name: nRF52840 application
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - run: python3 -m pip install -r scripts/requirements-dfu.txt
+      - name: Cache ARM package downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/chameleon-arm-apt
+          key: arm-gcc-ubuntu-noble-v1
       - name: Install ARM GCC and newlib
         run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi libnewlib-dev
+          mkdir -p "$HOME/.cache/chameleon-arm-apt/partial"
+          # The hosted Azure mirror previously took over 15 minutes for ARM packages.
+          sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo apt-get -o "Dir::Cache::archives=$HOME/.cache/chameleon-arm-apt" -o APT::Keep-Downloaded-Packages=true install --no-install-recommends -y gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi libnewlib-dev
       - run: python3 scripts/build_firmware.py
       - run: python3 scripts/verify_firmware.py build/firmware/chameleon-learning.hex
       - name: Sign application for the existing official Ultra bootloader

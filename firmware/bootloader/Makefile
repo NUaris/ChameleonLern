@@ -1,18 +1,16 @@
-PROJECT_NAME     := secure_bootloader_ble_s140_pca10056
-TARGETS          := nrf52840_xxaa_s140
-OUTPUT_DIRECTORY := out
+include ../Makefile.defs
 
-SDK_ROOT := ./sdk/
-PROJ_DIR := ./app/
-
-$(OUTPUT_DIRECTORY)/nrf52840_xxaa_s140.out: \
-  LINKER_SCRIPT  := $(PROJ_DIR)/secure_bootloader_gcc_nrf52.ld
+TARGETS          := bootloader
+$(OUTPUT_DIRECTORY)/bootloader.out: \
+  LINKER_SCRIPT  := bootloader.ld
 
 
 # Source files common to all targets
 SRC_FILES += \
   $(PROJ_DIR)/main.c \
   $(PROJ_DIR)/dfu_public_key.c \
+  $(SRC_COMMON)/hw_connect.c \
+  $(SRC_COMMON)/libc_nano_stubs.c \
   $(SDK_ROOT)/modules/nrfx/drivers/src/nrfx_clock.c \
   $(SDK_ROOT)/modules/nrfx/drivers/src/nrfx_power.c \
   $(SDK_ROOT)/modules/nrfx/drivers/src/nrfx_systick.c \
@@ -58,7 +56,6 @@ SRC_FILES += \
   $(SDK_ROOT)/components/libraries/crypto/backend/cc310_bl/cc310_bl_backend_hash.c \
   $(SDK_ROOT)/components/libraries/crypto/backend/cc310_bl/cc310_bl_backend_init.c \
   $(SDK_ROOT)/components/libraries/crypto/backend/cc310_bl/cc310_bl_backend_shared.c \
-  $(SDK_ROOT)/components/boards/boards.c \
   $(SDK_ROOT)/components/softdevice/common/nrf_sdh.c \
   $(SDK_ROOT)/components/softdevice/common/nrf_sdh_ble.c \
   $(SDK_ROOT)/components/softdevice/common/nrf_sdh_soc.c \
@@ -104,7 +101,8 @@ SRC_FILES += \
 # Include folders common to all targets
 INC_FOLDERS += \
   $(PROJ_DIR) \
-  $(PROJ_DIR)/config \
+  ${SRC_COMMON} \
+  $(SDK_ROOT)/components \
   $(SDK_ROOT)/modules/nrfx/drivers/include \
   $(SDK_ROOT)/components/libraries/crypto/backend/micro_ecc \
   $(SDK_ROOT)/components/libraries/memobj \
@@ -138,7 +136,6 @@ INC_FOLDERS += \
   $(SDK_ROOT)/external/nrf_oberon \
   $(SDK_ROOT)/components/libraries/strerror \
   $(SDK_ROOT)/components/libraries/crypto/backend/mbedtls \
-  $(SDK_ROOT)/components/boards \
   $(SDK_ROOT)/components/libraries/crypto/backend/cc310 \
   $(SDK_ROOT)/components/libraries/bootloader \
   $(SDK_ROOT)/components/softdevice/s140/headers \
@@ -166,6 +163,22 @@ LIB_FILES += \
   $(SDK_ROOT)/external/nrf_oberon/lib/cortex-m4/hard-float/liboberon_3.0.8.a \
   $(SDK_ROOT)/external/nrf_cc310_bl/lib/cortex-m4/hard-float/libnrf_cc310_bl_0.9.13.a \
 
+
+ifeq	(${CURRENT_DEVICE_TYPE}, ${CHAMELEON_ULTRA})
+  CFLAGS += -DPROJECT_CHAMELEON_ULTRA
+$(info  Chameleon Ultra <Bootloader>: zZZZZZ.)
+else ifeq (${CURRENT_DEVICE_TYPE}, ${CHAMELEON_LITE})
+  CFLAGS += -DPROJECT_CHAMELEON_LITE
+$(info  Chameleon Lite <Bootloader>: zZZZZZ.)
+else
+$(error Chameleon <Bootloader>: No device type define.)
+endif
+
+ifeq (${SDK_VALIDATION}, 1)
+SRC_FILES += \
+  $(SRC_COMMON)/sdk_validation.c
+endif
+
 # Optimization flags
 OPT = -Os -g3
 # Uncomment the line below to enable link time optimization
@@ -174,8 +187,7 @@ OPT = -Os -g3
 # C flags common to all targets
 CFLAGS += $(OPT)
 CFLAGS += -DBLE_STACK_SUPPORT_REQD
-CFLAGS += -DBOARD_CHAMELEON
-CFLAGS += -DCONFIG_GPIO_AS_PINRESET
+# CFLAGS += -DCONFIG_GPIO_AS_PINRESET
 CFLAGS += -DFLOAT_ABI_HARD
 CFLAGS += -DNRF52840_XXAA
 CFLAGS += -DNRF_DFU_SETTINGS_VERSION=2
@@ -200,7 +212,6 @@ ASMFLAGS += -mcpu=cortex-m4
 ASMFLAGS += -mthumb -mabi=aapcs
 ASMFLAGS += -mfloat-abi=hard -mfpu=fpv4-sp-d16
 ASMFLAGS += -DBLE_STACK_SUPPORT_REQD
-ASMFLAGS += -DBOARD_CHAMELEON
 ASMFLAGS += -DCONFIG_GPIO_AS_PINRESET
 ASMFLAGS += -DFLOAT_ABI_HARD
 ASMFLAGS += -DNRF52840_XXAA
@@ -213,7 +224,7 @@ ASMFLAGS += -DSVC_INTERFACE_CALL_AS_NORMAL_FUNCTION
 
 # Linker flags
 LDFLAGS += $(OPT)
-LDFLAGS += -mthumb -mabi=aapcs -L$(SDK_ROOT)/modules/nrfx/mdk -T$(LINKER_SCRIPT)
+LDFLAGS += -mthumb -mabi=aapcs -L$(SDK_ROOT)/modules/nrfx/mdk -L${LD_DIR}/ -T$(LINKER_SCRIPT)
 LDFLAGS += -mcpu=cortex-m4
 LDFLAGS += -mfloat-abi=hard -mfpu=fpv4-sp-d16
 # let linker dump unused sections
@@ -221,8 +232,8 @@ LDFLAGS += -Wl,--gc-sections
 # use newlib in nano version
 LDFLAGS += --specs=nano.specs
 
-nrf52840_xxaa_s140: CFLAGS += -D__HEAP_SIZE=0
-nrf52840_xxaa_s140: ASMFLAGS += -D__HEAP_SIZE=0
+bootloader: CFLAGS += -D__HEAP_SIZE=0
+bootloader: ASMFLAGS += -D__HEAP_SIZE=0
 
 # Add standard libraries at the very end of the linker input, after all objects
 # that may need symbols provided by these libraries.
@@ -232,20 +243,29 @@ LIB_FILES += -lc -lnosys -lm
 .PHONY: default help
 
 # Default target - first one defined
-default: nrf52840_xxaa_s140
+default: bootloader
 
 # Print all targets that can be built
 help:
 	@echo following targets are available:
-	@echo		nrf52840_xxaa_s140
+	@echo		bootloader
 	@echo		flash_softdevice
 	@echo		config - starting external tool for editing sdk_config.h
 	@echo		flash      - flashing binary
 
 TEMPLATE_PATH := $(SDK_ROOT)/components/toolchain/gcc
 
-
 include $(TEMPLATE_PATH)/Makefile.common
+
+# tolerate warnings in newer gcc versions
+# need to be called after $(TEMPLATE_PATH)/Makefile.common
+# The return value of the Windows+msys2 build platform has carriage returns and line breaks, which need to be removed.
+CC_VERSION = $(shell $(CC) -dumpversion 2>/dev/null | tr -d '\r' | cut -d. -f1)
+CC_VERSION := $(or $(strip $(CC_VERSION)),0)
+ifeq ($(shell expr $(CC_VERSION) \>= 12), 1)
+    # avoid a couple of false warnings in nRF SDK
+    CFLAGS += --param=min-pagesize=0
+endif
 
 $(foreach target, $(TARGETS), $(call define_target, $(target)))
 
@@ -253,8 +273,8 @@ $(foreach target, $(TARGETS), $(call define_target, $(target)))
 
 # Flash the program
 flash: default
-	@echo Flashing: $(OUTPUT_DIRECTORY)/nrf52840_xxaa_s140.hex
-	nrfjprog -f nrf52 --program $(OUTPUT_DIRECTORY)/nrf52840_xxaa_s140.hex --sectorerase
+	@echo Flashing: $(OUTPUT_DIRECTORY)/bootloader.hex
+	nrfjprog -f nrf52 --program $(OUTPUT_DIRECTORY)/bootloader.hex --sectorerase
 	nrfjprog -f nrf52 --reset
 
 # Flash softdevice
@@ -263,11 +283,26 @@ flash_softdevice:
 	nrfjprog -f nrf52 --program $(SDK_ROOT)/components/softdevice/s140/hex/s140_nrf52_7.2.0_softdevice.hex --sectorerase
 	nrfjprog -f nrf52 --reset
 
+# Flash with ST-Link + OpenOCD
+flash_stlink:
+	@echo Generating settings...
+	nrfutil settings generate --family NRF52840 --application $(OUTPUT_DIRECTORY)/application.hex --application-version 1 --bootloader-version 1 --bl-settings-version 2 $(OUTPUT_DIRECTORY)/settings.hex
+	@echo Merging required files
+	mergehex --merge $(OUTPUT_DIRECTORY)/bootloader.hex $(OUTPUT_DIRECTORY)/settings.hex --output $(OUTPUT_DIRECTORY)/bootloader_settings.hex
+	mergehex --merge $(OUTPUT_DIRECTORY)/bootloader_settings.hex $(OUTPUT_DIRECTORY)/application.hex $(SDK_ROOT)/components/softdevice/s140/hex/s140_nrf52_7.2.0_softdevice.hex --output $(OUTPUT_DIRECTORY)/project.hex
+	@echo Flashing...
+	openocd -f interface/stlink.cfg -f target/nrf52.cfg -c "program $(OUTPUT_DIRECTORY)/project.hex verify reset ; shutdown"
+
 erase:
 	nrfjprog -f nrf52 --eraseall
 
+# Erase with ST-Link
+erase_stlink:
+	openocd -f interface/stlink.cfg -f target/nrf52.cfg -c "flash init; init; reset halt; flash erase_sector 0 1 last; exit"
+	@echo Successfully deleted everything!
+
 # Config project
-SDK_CONFIG_FILE := $(PROJ_DIR)/config/sdk_config.h
+SDK_CONFIG_FILE := $(PROJ_DIR)/sdk_config.h
 CMSIS_CONFIG_TOOL := $(SDK_ROOT)/external_tools/cmsisconfig/CMSIS_Configuration_Wizard.jar
 config:
 	java -jar $(CMSIS_CONFIG_TOOL) $(SDK_CONFIG_FILE)

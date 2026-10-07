@@ -1,0 +1,1 @@
+/* Platform adapter needs no direct LED calls. */
