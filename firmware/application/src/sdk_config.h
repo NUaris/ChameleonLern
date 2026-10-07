@@ -6529,7 +6529,9 @@
 // <i> Any value higher than 31 creates an additional buffer just for descriptor strings.
 
 #ifndef APP_USBD_CONFIG_DESC_STRING_SIZE
-#define APP_USBD_CONFIG_DESC_STRING_SIZE 31
+// Custom product name includes hardware and firmware suffixes. Use the SDK
+// dedicated string buffer instead of overflowing its 64-byte EP0 buffer.
+#define APP_USBD_CONFIG_DESC_STRING_SIZE 63
 #endif
 
 // <q> APP_USBD_CONFIG_DESC_STRING_UTF_ENABLED  - Enable UTF8 conversion.

@@ -158,7 +158,10 @@ def execute(client, args):
         # Accept old mode replies during migration; new firmware uses the official status.
         original=client.request_mode(1)
         try:
-            client.request(1005,struct.pack('>BH',args.slot,tag_type)); client.select(args.slot)
+            client.request(1005,struct.pack('>BH',args.slot,tag_type))
+            client.request(1004,struct.pack('>BH',args.slot,tag_type))
+            client.request(1006,bytes([args.slot,1 if tag_type==100 else 2,1]))
+            client.select(args.slot)
             if dump is not None:
                 for start in range(0,len(dump)//16,31):
                     count=min(31,len(dump)//16-start)

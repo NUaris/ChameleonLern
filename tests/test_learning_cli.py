@@ -73,6 +73,8 @@ class Tests(unittest.TestCase):
             p=Path(folder)/'card.bin';p.write_bytes(bytes(range(256))*16)
             args=cli.parser().parse_args(['--port','fake','import-mf1','8',str(p)])
             device=FakeDevice();cli.execute(device,args)
+            self.assertIn((1004,struct.pack('>BH',7,1003)),device.calls)
+            self.assertIn((1006,bytes([7,2,1])),device.calls)
             blocks=[payload for command,payload in device.calls if command==4000]
             self.assertEqual(b''.join(x[1:] for x in blocks),p.read_bytes());self.assertTrue(all(len(x)<=512 for x in blocks));self.assertEqual(device.mode,0)
             device=FakeDevice();device.fail=4000

@@ -2,7 +2,7 @@
 
 v0.2.0-alpha.1 已完整同步官方 ChameleonUltra 的 firmware 与 software 至 2026-10-07 main 提交 [5c99d4a39b424cc67ae82bbcfc8ba5ec8f69bf9c](https://github.com/RfidResearchGroup/ChameleonUltra/commit/5c99d4a39b424cc67ae82bbcfc8ba5ec8f69bf9c)。逐文件上游 Git blob SHA 与自定义补丁清单见 UPSTREAM_SYNC.json。生产构建不再使用下面的历史工程；历史记录保留以追溯 alpha.2／alpha.3 的修正。
 
-本项目新增学习模块、被动 BLE 扫描、有场互锁及手动选择钩子；保留现有官方引导程序、S140 7.2.0、22 个 FDS 页和 RAM 保留边界。SDK／官方读卡器／灯效未作替代实现。FDS 成功读取后关闭打开记录，以免反复读模型阻碍垃圾回收。
+本项目新增学习模块、被动 BLE 扫描、有场互锁及手动选择钩子；保留现有官方引导程序、S140 7.2.0、22 个 FDS 页和 RAM 保留边界。SDK／官方读卡器／灯效未作替代实现。FDS 成功读取后关闭打开记录，以免反复读模型阻碍垃圾回收。自定义 USB 名称带硬件／固件版本后缀，描述符容量设为 63 字符，使用 SDK 的独立缓冲区，避免超过默认 31 字符时破坏 USB 状态；回归测试覆盖硬件与版本号的最大长度。
 
 ---
 

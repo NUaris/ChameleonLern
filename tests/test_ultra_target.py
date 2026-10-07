@@ -16,6 +16,17 @@ class Tests(unittest.TestCase):
             self.assertEqual(actual,expected,path)
         for path in ['firmware/application/src/rfid/reader/hf/rc522.c','firmware/application/src/rfid/reader/hf/mf1_toolbox.c','firmware/application/src/rgb_marquee.c','firmware/common/hw_connect.c']:
             self.assertNotIn(path,patches)
+    def test_usb_product_descriptor_fits_sdk_buffer(self):
+        config=(ROOT/'firmware/application/src/sdk_config.h').read_text()
+        capacity=int(re.search(r'^#define APP_USBD_CONFIG_DESC_STRING_SIZE (\d+)',config,re.M)[1])
+        names=re.findall(r'^#define DEVICE_NAME_STR\s+"([^"]+)"',(ROOT/'firmware/common/device_info.h').read_text(),re.M)
+        self.assertTrue(names)
+        for name in names:
+            # Hardware is uint8_t and firmware version is uint16_t.
+            longest=f'{name}: hw_v255, fw_v65535'
+            self.assertLessEqual(len(longest),capacity)
+            self.assertLessEqual(2+2*len(longest),254)
+        self.assertGreater(2+2*capacity,64, 'Use a dedicated SDK string buffer for the long custom name')
     def test_private_model_id_does_not_overlap_official(self):
         header=(ROOT/'firmware/application/src/selection/storage_ids.h').read_text()
         model=int(re.search(r'#define CL_MODEL_FILE 0x([0-9A-F]+)',header)[1],16)
