@@ -459,6 +459,11 @@
               <FilePath>..\app\app_cmd.c</FilePath>
             </File>
             <File>
+              <FileName>gui_protocol.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\app\gui_protocol.c</FilePath>
+            </File>
+            <File>
               <FileName>dfu_entry.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\app\dfu\dfu_entry.c</FilePath>

@@ -101,6 +101,12 @@ bool tag_emulation_slot_available(uint8_t slot);
 tag_specific_type_t tag_emulation_slot_type(uint8_t slot, tag_sense_type_t sense);
 bool tag_emulation_set_em410x(const uint8_t id[5]);
 bool tag_emulation_set_mf1_blocks(uint8_t first, uint8_t count, const uint8_t *data);
+uint8_t *tag_emulation_active_data(tag_sense_type_t sense);
+bool tag_emulation_get_em410x(uint8_t id[5]);
+bool tag_emulation_sense_enabled(uint8_t slot, tag_sense_type_t sense);
+bool tag_emulation_enable_sense(uint8_t slot, tag_sense_type_t sense, bool enable);
+bool tag_emulation_delete_sense(uint8_t slot, tag_sense_type_t sense);
+bool tag_emulation_select_empty_slot(uint8_t slot);
 
 // 在某个方向上查询任何一个使能的卡槽
 uint8_t find_next_tag_emulation_slot(uint8_t slot_now);

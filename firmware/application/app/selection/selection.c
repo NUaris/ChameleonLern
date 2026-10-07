@@ -141,6 +141,17 @@ bool selection_manual_slot(uint8_t slot) {
     return true;
 }
 
+bool selection_management_slot(uint8_t slot) {
+    if (tag_emulation_slot_available(slot)) return selection_manual_slot(slot);
+    /* GUI selects an empty slot before uploading its card. Do not learn an
+     * empty identity, and keep the ordinary field interlock for this path. */
+    if (!tag_emulation_select_empty_slot(slot)) return false;
+    pending_slot = SEL_NONE;
+    manual_since = bsp_monotonic_ms(); manual_hold = true;
+    light_up_by_slot(); set_slot_ligth_color(0);
+    return true;
+}
+
 void selection_process(void) {
     uint32_t now = bsp_monotonic_ms();
     sel_clock_update(&clock_state, now);

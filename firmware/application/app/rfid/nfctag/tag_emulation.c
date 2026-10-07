@@ -219,8 +219,8 @@ void tag_emulation_load_data(void) {
     memset(m_tag_data_buffer_lf, 0, sizeof(m_tag_data_buffer_lf));
     uint8_t slot = tag_emulation_get_slot();
     if (slot >= TAG_MAX_SLOT_NUM || !slotConfig.group[slot].enable) return;
-    load_data_by_tag_type(slot, slotConfig.group[slot].tag_hf);
-    load_data_by_tag_type(slot, slotConfig.group[slot].tag_lf);
+    if (tag_emulation_sense_enabled(slot, TAG_SENSE_HF)) load_data_by_tag_type(slot, slotConfig.group[slot].tag_hf);
+    if (tag_emulation_sense_enabled(slot, TAG_SENSE_LF)) load_data_by_tag_type(slot, slotConfig.group[slot].tag_lf);
 }
 
 /**
@@ -237,17 +237,29 @@ bool tag_emulation_save_data(void) {
 /**
  * 删除某个卡槽指定的场类型的数据，如果是当前的激活的卡槽的数据，我们还需要动态关闭此卡片的模拟
  */
-void tag_emulation_delete_data(uint8_t slot, tag_sense_type_t sense) {
+bool tag_emulation_delete_sense(uint8_t slot, tag_sense_type_t sense) {
     if (slot >= TAG_MAX_SLOT_NUM || (sense != TAG_SENSE_HF && sense != TAG_SENSE_LF) ||
-        !tag_emulation_idle_pause()) return;
+        !tag_emulation_idle_pause()) return false;
+    if (slot == tag_emulation_get_slot() && !tag_emulation_save_data()) {
+        tag_emulation_idle_resume(); return false;
+    }
     fds_slot_record_map_t map; get_fds_map_by_slot_sense_type(slot, sense, &map);
-    if (fds_delete_sync(map.id, map.key) < 0) { tag_emulation_idle_resume(); return; }
+    if (fds_delete_sync(map.id, map.key) < 0) { tag_emulation_idle_resume(); return false; }
     if (sense == TAG_SENSE_HF) slotConfig.group[slot].tag_hf = TAG_TYPE_UNKNOWN;
     else slotConfig.group[slot].tag_lf = TAG_TYPE_UNKNOWN;
+    if (slotConfig.group[slot].reserved2 & 0x80)
+        slotConfig.group[slot].reserved2 &= (uint8_t)~(sense == TAG_SENSE_HF ? 2 : 1);
+    if ((slotConfig.group[slot].reserved2 & 0x80) && !(slotConfig.group[slot].reserved2 & 3))
+        slotConfig.group[slot].enable = false;
     if (slotConfig.group[slot].tag_hf == TAG_TYPE_UNKNOWN && slotConfig.group[slot].tag_lf == TAG_TYPE_UNKNOWN)
         slotConfig.group[slot].enable = false;
     if (slot == tag_emulation_get_slot()) tag_emulation_load_data();
     tag_emulation_idle_resume();
+    return true;
+}
+
+void tag_emulation_delete_data(uint8_t slot, tag_sense_type_t sense) {
+    (void)tag_emulation_delete_sense(slot, sense);
 }
 
 /**
@@ -258,11 +270,16 @@ bool tag_emulation_factory_data(uint8_t slot, tag_specific_type_t type) {
     tag_datas_factory_t factory = get_data_factory_from_tag_type(type);
     if (!factory) return false;
     if (!tag_emulation_idle_pause()) return false;
+    if (slot == tag_emulation_get_slot() && !tag_emulation_save_data()) {
+        tag_emulation_idle_resume(); return false;
+    }
     bool success = factory(slot, type);
     if (success) {
         if (get_sense_type_from_tag_type(type) == TAG_SENSE_HF) slotConfig.group[slot].tag_hf = type;
         else slotConfig.group[slot].tag_lf = type;
         slotConfig.group[slot].enable = true;
+        if (slotConfig.group[slot].reserved2 & 0x80)
+            slotConfig.group[slot].reserved2 |= get_sense_type_from_tag_type(type) == TAG_SENSE_HF ? 2 : 1;
         if (tag_emulation_get_slot() == slot) tag_emulation_load_data();
     }
     if (get_device_mode() == DEVICE_MODE_TAG) tag_emulation_sense_run();
@@ -458,6 +475,7 @@ bool tag_emulation_change_type(uint8_t slot, tag_specific_type_t type) {
     if (slot >= TAG_MAX_SLOT_NUM || selection_field_active() || !get_data_loadcb_from_tag_type(type)) return false;
     bool active = slot == tag_emulation_get_slot();
     if (active && !tag_emulation_idle_pause()) return false;
+    if (active && !tag_emulation_save_data()) { tag_emulation_idle_resume(); return false; }
     tag_sense_type_t sense = get_sense_type_from_tag_type(type);
     if (sense == TAG_SENSE_HF) slotConfig.group[slot].tag_hf = type;
     else if (sense == TAG_SENSE_LF) slotConfig.group[slot].tag_lf = type;
@@ -480,7 +498,7 @@ bool tag_emulation_slot_available(uint8_t slot) {
     for (unsigned i = TAG_SENSE_LF; i <= TAG_SENSE_HF; i++) {
         tag_sense_type_t sense = (tag_sense_type_t)i;
         tag_specific_type_t type = tag_emulation_slot_type(slot, sense);
-        if (type == TAG_TYPE_UNKNOWN || !get_data_loadcb_from_tag_type(type)) continue;
+        if (!tag_emulation_sense_enabled(slot, sense) || type == TAG_TYPE_UNKNOWN || !get_data_loadcb_from_tag_type(type)) continue;
         fds_slot_record_map_t map; get_fds_map_by_slot_sense_type(slot, sense, &map);
         if (fds_exists(map.id, map.key)) return true;
     }
@@ -492,6 +510,7 @@ bool tag_emulation_set_em410x(const uint8_t id[5]) {
     if (!tag_emulation_idle_pause()) return false;
     uint8_t slot = tag_emulation_get_slot();
     slotConfig.group[slot].tag_lf = TAG_TYPE_EM410X; slotConfig.group[slot].enable = true;
+    if (slotConfig.group[slot].reserved2 & 0x80) slotConfig.group[slot].reserved2 |= 1;
     memset(m_tag_data_buffer_lf, 0, sizeof(m_tag_data_buffer_lf));
     memcpy(m_tag_data_buffer_lf, id, 5);
     lf_tag_em410x_data_loadcb(TAG_TYPE_EM410X, &m_tag_data_lf); m_lf_loaded = true;
@@ -512,4 +531,43 @@ bool tag_emulation_set_mf1_blocks(uint8_t first, uint8_t count, const uint8_t *d
     memcpy(info->memory[first], data, count * 16u);
     if (get_device_mode() == DEVICE_MODE_TAG) tag_emulation_sense_run();
     return true;
+}
+
+uint8_t *tag_emulation_active_data(tag_sense_type_t sense) {
+    if (sense == TAG_SENSE_HF && m_hf_loaded) return m_tag_data_buffer_hf;
+    if (sense == TAG_SENSE_LF && m_lf_loaded) return m_tag_data_buffer_lf;
+    return NULL;
+}
+
+bool tag_emulation_get_em410x(uint8_t id[5]) {
+    if (!id || !m_lf_loaded) return false;
+    memcpy(id, m_tag_data_buffer_lf, 5); return true;
+}
+
+/* reserved2 was zero in alpha.2. A high-bit marker preserves that layout and
+ * gives legacy records their original shared-enable behavior. */
+bool tag_emulation_sense_enabled(uint8_t slot, tag_sense_type_t sense) {
+    if (slot >= TAG_MAX_SLOT_NUM || (sense != TAG_SENSE_HF && sense != TAG_SENSE_LF) || !slotConfig.group[slot].enable) return false;
+    uint8_t mask = slotConfig.group[slot].reserved2;
+    return !(mask & 0x80) || (mask & (sense == TAG_SENSE_HF ? 2 : 1));
+}
+
+bool tag_emulation_enable_sense(uint8_t slot, tag_sense_type_t sense, bool enable) {
+    if (slot >= TAG_MAX_SLOT_NUM || (sense != TAG_SENSE_HF && sense != TAG_SENSE_LF) || !tag_emulation_idle_pause()) return false;
+    if (slot == tag_emulation_get_slot() && !tag_emulation_save_data()) { tag_emulation_idle_resume(); return false; }
+    uint8_t mask = slotConfig.group[slot].reserved2;
+    if (!(mask & 0x80)) mask = slotConfig.group[slot].enable ? 0x83 : 0x80;
+    uint8_t bit = sense == TAG_SENSE_HF ? 2 : 1;
+    mask = enable ? mask | bit : mask & (uint8_t)~bit;
+    slotConfig.group[slot].reserved2 = mask;
+    slotConfig.group[slot].enable = (mask & 3) != 0;
+    if (slot == tag_emulation_get_slot()) tag_emulation_load_data();
+    tag_emulation_idle_resume(); return true;
+}
+
+bool tag_emulation_select_empty_slot(uint8_t slot) {
+    if (slot >= TAG_MAX_SLOT_NUM || !get_tag_emulation_slot_enable(slot) || !tag_emulation_idle_pause()) return false;
+    if (!tag_emulation_save_data()) { tag_emulation_idle_resume(); return false; }
+    tag_emulation_set_slot(slot); tag_emulation_load_data();
+    tag_emulation_idle_resume(); return true;
 }

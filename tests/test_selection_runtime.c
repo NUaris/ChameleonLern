@@ -18,6 +18,7 @@ uint32_t app_timer_cnt_diff_compute(uint32_t a,uint32_t b){return a-b;}
 bool tag_emulation_slot_available(uint8_t slot){return slot<7;}
 uint8_t tag_emulation_get_slot(void){return current;}
 bool tag_emulation_change_slot(uint8_t slot,bool pause){(void)pause;assert(!selection_field_active());current=slot;switches++;return true;}
+bool tag_emulation_select_empty_slot(uint8_t slot){if(slot>=8||selection_field_active())return false;current=slot;return true;}
 bool tag_emulation_save(void){return !selection_field_active();}
 bool tag_emulation_idle_pause(void){return !selection_field_active();}
 void tag_emulation_idle_resume(void){}
@@ -48,6 +49,9 @@ int main(void){
  now+=30000;selection_ble_report(123,-55);selection_process();assert(current==2);
  now+=21000;selection_process();assert(command(1105,NULL,0)==STATUS_DEVICE_SUCCESS&&output[3]==SEL_REASON_NO_CONTEXT);
  train[1]=1;assert(command(1103,train,2)==STATUS_NO_CONTEXT);assert(!selection_manual_slot(7));
+ assert(!selection_management_slot(8));
+ selection_field_event(2,true);assert(!selection_management_slot(7));selection_field_event(2,false);
+ assert(selection_management_slot(7));status();assert(output[2]==7&&output[12]==SEL_NONE&&output[8]==1);
  mode(SEL_OBSERVE);flash_fail=true;assert(!selection_save());status();assert(output[13]&&output[15]);
  flash_fail=false;assert(selection_save());status();assert(!output[13]&&!output[15]);
  sel_model_t restored;assert(sel_model_decode(&restored,flash,sizeof(flash))&&sel_sample_count(&restored)==1);

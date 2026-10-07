@@ -11,6 +11,7 @@
 #define CL_CONFIG_KEY 1
 #define CL_TAG_HF_FILE 0x4C01
 #define CL_TAG_LF_FILE 0x4C02
+#define CL_NICK_FILE 0x4C03
 #define CL_TAG_KEY_BASE 1
 #define CL_MODEL_FILE 0x4C10
 #define CL_MODEL_KEY 1

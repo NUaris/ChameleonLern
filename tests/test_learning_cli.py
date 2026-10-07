@@ -47,6 +47,9 @@ class Tests(unittest.TestCase):
         def respond(p):return reply(struct.unpack_from('>H',p,2)[0],b'\0' if p[3]==0xea else b'',0)
         # command 1002 = 0x03ea
         serial=Serial(respond);self.assertEqual(cli.Client(serial).request_mode(1),0);self.assertEqual(len(serial.sent),2)
+    def test_current_protocol_modes(self):
+        def respond(p):return reply(struct.unpack_from('>H',p,2)[0],b'\0' if p[3]==0xea else b'',0x68)
+        serial=Serial(respond);self.assertEqual(cli.Client(serial).request_mode(1),0);self.assertEqual(len(serial.sent),2)
     def test_dfu_entry_and_official_no_ack(self):
         args=cli.parser().parse_args(['--port','fake','enter-dfu'])
         self.assertTrue(cli.execute(FakeDevice(),args)['acknowledged'])

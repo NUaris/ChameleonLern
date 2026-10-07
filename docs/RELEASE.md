@@ -1,3 +1,9 @@
+alpha.3 修复 Chameleon Ultra GUI 的旧协议弹窗与 USB Lite 误识别，补充卡槽查询、
+独立 HF/LF 启用、持久化昵称、MF1／EM410X 导入导出和现行 HF 寻卡响应。
+学习和自动选卡算法保持原行为。管理格式为 2.0，私人学习协议保持 1。
+不声称具备官方全部射频功能；能力表仅列实际实现的命令。
+alpha.2 的卡片和学习记录无需迁移；昵称新增私有记录，原配置保留字节保存频率启用状态。
+
 ChameleonLern 为基于官方 ChameleonUltra 历史代码的个人二次开发固件，实现周边蓝牙、读卡器和时间特征的学习与自动选卡。
 
 本版本修正量产 Ultra 的 LF 输入、读卡器电源、按钮和 LED 引脚，并提供 **ultra-dfu-app.zip**：使用与现行官方引导程序匹配的共享密钥签名，hw_version=0、sd_req=0x100（S140 7.2.0）、application_version=1。仅更新应用，不替换 SoftDevice 或引导程序。HEX/BIN 仍为原始应用（基址 0x27000），普通 DFU 安装请选择 ZIP。

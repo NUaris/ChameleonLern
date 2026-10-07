@@ -26,10 +26,10 @@ class Tests(unittest.TestCase):
         header = (ROOT / 'firmware/application/app/storage_ids.h').read_text()
         ids = {name: int(value,16) for name,value in re.findall(r'#define\s+(CL_\w+_FILE)\s+0x([0-9A-Fa-f]+)', header)}
         official = {0x1000,0x1001,*range(0x1066,0x106a),*range(0x1100,0x1108),*range(0x1200,0x1208)}
-        self.assertEqual(len(ids), 4)
+        self.assertEqual(len(ids), 5)
         self.assertFalse(set(ids.values()) & official)
         self.assertTrue(all(0 < i < 0xC000 for i in ids.values()))
-        self.assertEqual(len(set(ids.values())),4)
+        self.assertEqual(len(set(ids.values())),5)
         self.assertEqual(ids['CL_TAG_LF_FILE'], ids['CL_TAG_HF_FILE']+1)
 
     def test_import_commands_do_not_reuse_official_slot_enable_or_nickname(self):

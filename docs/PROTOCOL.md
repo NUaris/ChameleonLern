@@ -10,9 +10,9 @@ USB CDC 与 BLE NUS 使用相同帧：`11 EF | cmd:u16 | status:u16 | length:u16
 
 | cmd | 请求 payload | 成功响应 |
 | --- | --- | --- |
-| 1000 | 空 | major:u8,minor:u8，当前 0,1；状态 0x68 |
-| 1001 | mode:u8，0=模拟，1=读卡 | 空，状态 0；有场时拒绝切模式 |
-| 1002 | 空 | mode:u8，状态 0 |
+| 1000 | 空 | major:u8,minor:u8，alpha.3 起为 2,0（管理协议格式）；状态 0x68 |
+| 1001 | mode:u8，0=模拟，1=读卡 | 空，状态 0x68；有场时拒绝切模式 |
+| 1002 | 空 | mode:u8，状态 0x68 |
 | 1003 | slot:u8 | 空；排队手动切卡，随后检查 1100 的 current/pending |
 | 1005 | slot:u8,type:u8 | 初始化指定槽对应频率；type 1=EM410X，2=Mini，3=1K，4=2K，5=4K |
 | 1200 | EM410X ID 5 字节 | 空；只在读卡模式更新当前槽并保存 |
@@ -69,3 +69,31 @@ alpha.2 将私人导入／查询命令从 alpha.1 的 1006/1007/1008 移到 1200
 ## 样本元数据（1106）
 
 每项依次为 `slot:u8,observations:u8,beacon_count:u8,reader_count:u8,field:u8,time_valid:u8,weekday:u8,minute:u16,order:u32`。星期从周一 0 开始，minute 为本地当日分钟。没有提供广播原文、密钥、卡片 dump 或模型原始标识导出命令。
+
+## alpha.3 官方 GUI 管理兼容层
+
+设备继续使用私人学习协议（1100..1108）和原卡片存储；项目版本为
+`ChameleonLern-v0.1.0-alpha.3`。1000 返回 `02 00`，表示所提供管理命令采用
+现行的网络序格式，不表示具备官方 2.0 的全部射频功能。USB 名称为
+`ChameleonUltra ChameleonLern`，序列号使用芯片地址；BLE 名称为 `ChameleonUltra Lern`。
+
+- 1004／1005：`slot:u8,type:u16be`；EM410X=100，MF1 Mini/1K/2K/4K=1000..1003。
+  1005 同时接受私人 CLI 原来的 `slot:u8,type:u8`。
+- 1006：`slot,sense,enabled`；HF/LF 可独立启用，利用原配置的保留字节保存，兼容 alpha.2。
+- 1018：当前槽一字节；1019：8×`hf_type:u16be,lf_type:u16be`；1023：8×`hf_enabled,lf_enabled`。
+- 1007／1008／1021：设置／读取／清除 `slot,sense` 的 UTF-8 昵称；最多 30 字节。
+  1038 返回 8×`hf_length,hf_name,lf_length,lf_name`，最大 496 字节。
+  1009 保存卡片、启用配置及昵称；昵称使用独立 FDS file 0x4C03。
+- 1024：`slot,sense` 删除对应频率卡片，保存前仅更新卡槽配置 RAM。
+- 4000：`first_block:u8,blocks[16*n]`，4008：`first_block,count` 读取，最多 32 块。
+- 4001／4018：设置／读取 `uid_length,uid,atqa[2],sak,ats_length,ats`。
+- 4009／4010／4011／4012／4014／4015／4016／4017：读取 MF1 设置、Gen1A、
+  block-0 防冲撞和写入模式；Gen2 getter 如实返回关闭，不提供未实现的 Gen2 setter。
+- 5000／5001：设置／读取 EM410X 的 5 字节 ID。
+
+GUI 可以先启用并选中空槽，再创建和导入卡片；空槽不产生学习样本。
+卡片写入仍执行场检测／暂停保护。1035 只列出真实实现的命令，未实现的
+Ultralight、其他 LF 格式、设备设置和高级读取功能不会假报支持，所以最新版
+GUI 的“更新固件以获得全部功能”提示仍可能出现。旧的 2003 与现行
+Static Nested Acquisition 编号冲突，本版不再注册这一旧检测命令。
+1001／1002 的学习 CLI 同时接受 alpha.2 的状态 0 和 alpha.3 的 0x68。

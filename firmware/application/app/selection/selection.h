@@ -10,6 +10,7 @@ bool selection_field_active(void);
 void selection_reader_command(uint8_t kind, uint8_t parameter);
 void selection_ble_report(uint32_t key, int8_t rssi);
 bool selection_manual_slot(uint8_t slot);
+bool selection_management_slot(uint8_t slot);
 bool selection_save(void);
 bool selection_background_enabled(void);
 /* Returns a protocol status; response length never exceeds 512. */

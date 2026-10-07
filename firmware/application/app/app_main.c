@@ -1,3 +1,4 @@
+#include "gui_protocol.h"
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
@@ -408,7 +409,8 @@ int main(void)
     fds_util_init();                    // Flash callbacks require the running SoftDevice.
     check_wakeup_src();                 // 检测唤醒源，根据唤醒源决定BLE广播与后续休眠动作
 
-    tag_emulation_init();               // 模拟卡初始化
+    tag_emulation_init();
+    gui_protocol_init();               // 模拟卡初始化
     light_up_by_slot();                 // 根据当前配置启用的卡槽亮起对应的灯
     selection_init();                  // Load the versioned learning model.
     tag_mode_enter();                   // 默认进入卡模拟模式

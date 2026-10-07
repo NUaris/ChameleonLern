@@ -11,6 +11,8 @@
 #include "app_cmd.h"
 #include "selection.h"
 #include "dfu_entry.h"
+#include "gui_protocol.h"
+#include <string.h>
 
 
 #define NRF_LOG_MODULE_NAME app_cmd
@@ -21,7 +23,7 @@ NRF_LOG_MODULE_REGISTER();
 
 
 data_frame_tx_t* cmd_processor_get_version(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
-    const uint8_t version[] = {0, 1};
+    const uint8_t version[] = {CHAMELEON_PROTOCOL_MAJOR, CHAMELEON_PROTOCOL_MINOR};
     if (length) return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
     return data_frame_make(cmd, STATUS_DEVICE_SUCCESS, sizeof(version), (uint8_t *)version);
 }
@@ -39,7 +41,7 @@ data_frame_tx_t* cmd_processor_change_device_mode(uint16_t cmd, uint16_t status,
     } else {
         return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
     }
-    return data_frame_make(cmd, 0x0000, 0, NULL);
+    return data_frame_make(cmd, STATUS_DEVICE_SUCCESS, 0, NULL);
 }
 
 data_frame_tx_t* cmd_processor_get_device_mode(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
@@ -49,20 +51,24 @@ data_frame_tx_t* cmd_processor_get_device_mode(uint16_t cmd, uint16_t status, ui
     } else {
         status = 0;
     }
-    return data_frame_make(cmd, 0x0000, 1, (uint8_t*)&status);
+    uint8_t mode_byte = (uint8_t)status;
+    return data_frame_make(cmd, STATUS_DEVICE_SUCCESS, 1, &mode_byte);
 }
 
 data_frame_tx_t* cmd_processor_14a_scan(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
     picc_14a_tag_t taginfo;
+    uint8_t response[15];
+    if (length) return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
     status = pcd_14a_reader_scan_auto(&taginfo);
-    if (status == HF_TAG_OK) {
-        length = sizeof(picc_14a_tag_t);
-        data = (uint8_t*)&taginfo;
-    } else {
-        length = 0;
-        data = NULL;
-    }
-    return data_frame_make(cmd, status, length, data);
+    if (status != HF_TAG_OK) return data_frame_make(cmd, status, 0, NULL);
+    if (taginfo.uid_len != 4 && taginfo.uid_len != 7 && taginfo.uid_len != 10)
+        return data_frame_make(cmd, HF_ERRSTAT, 0, NULL);
+    response[0] = taginfo.uid_len;
+    memcpy(response + 1, taginfo.uid, taginfo.uid_len);
+    memcpy(response + 1 + taginfo.uid_len, taginfo.atqa, 2);
+    response[taginfo.uid_len + 3] = taginfo.sak;
+    response[taginfo.uid_len + 4] = 0; /* No ATS captured by this reader path. */
+    return data_frame_make(cmd, status, taginfo.uid_len + 5, response);
 }
 
 data_frame_tx_t* cmd_processor_detect_mf1_support(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
@@ -71,8 +77,12 @@ data_frame_tx_t* cmd_processor_detect_mf1_support(uint16_t cmd, uint16_t status,
 }
 
 data_frame_tx_t* cmd_processor_detect_mf1_nt_level(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
+    if (length) return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
     status = Check_WeakNested_Support();
-    return data_frame_make(cmd, status, 0, NULL);
+    uint8_t level = status == NESTED_TAG_IS_STATIC ? 0 : status == HF_TAG_OK ? 1 : 2;
+    if (status != HF_TAG_OK && status != NESTED_TAG_IS_STATIC && status != NESTED_TAG_IS_HARD)
+        return data_frame_make(cmd, status, 0, NULL);
+    return data_frame_make(cmd, HF_TAG_OK, 1, &level);
 }
 
 data_frame_tx_t* cmd_processor_detect_mf1_darkside(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
@@ -220,7 +230,7 @@ data_frame_tx_t* cmd_processor_write_em410x_2_t57(uint16_t cmd, uint16_t status,
 }
 
 data_frame_tx_t* cmd_processor_set_slot_activated(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
-    status = length == 1 && selection_manual_slot(data[0]) ? STATUS_DEVICE_SUCCESS : STATUS_PAR_ERR;
+    status = length == 1 && gui_protocol_select_slot(data[0]) ? STATUS_DEVICE_SUCCESS : STATUS_PAR_ERR;
     return data_frame_make(cmd, status, 0, NULL);
 }
 
@@ -326,13 +336,23 @@ static data_frame_tx_t *cmd_device_identity(uint16_t cmd, uint16_t status, uint1
         uint8_t model = CHAMELEON_DEVICE_MODEL;
         return data_frame_make(cmd, STATUS_DEVICE_SUCCESS, 1, &model);
     }
-    static uint8_t version[] = "ChameleonLern-v0.1.0-alpha.2";
+    static uint8_t version[] = CHAMELEON_PROJECT_VERSION;
     return data_frame_make(cmd, STATUS_DEVICE_SUCCESS, sizeof(version) - 1, version);
 }
 
 static data_frame_tx_t *cmd_capabilities(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data);
 
+static data_frame_tx_t *cmd_gui_management(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
+    static uint8_t output[DATA_FRAME_MAX_DATA];
+    uint16_t size = 0;
+    status = gui_protocol_command(cmd, data, length, output, &size);
+    return data_frame_make(cmd, status, size, output);
+}
+
 static cmd_data_map_t m_data_cmd_map[] = {
+#define GUI_ENTRY(id) {id, NULL, cmd_gui_management, NULL},
+    GUI_COMMANDS(GUI_ENTRY)
+#undef GUI_ENTRY
     {DATA_CMD_ENTER_BOOTLOADER, NULL, cmd_enter_dfu, NULL},
     {DATA_CMD_GET_DEVICE_MODEL, NULL, cmd_device_identity, NULL},
     {DATA_CMD_GET_GIT_VERSION, NULL, cmd_device_identity, NULL},
@@ -356,7 +376,6 @@ static cmd_data_map_t m_data_cmd_map[] = {
     {    DATA_CMD_SCAN_14A_TAG,               before_reader_run,           cmd_processor_14a_scan,                      after_reader_run    },
     {    DATA_CMD_MF1_SUPPORT_DETECT,         before_reader_run,           cmd_processor_detect_mf1_support,            after_reader_run    },
     {    DATA_CMD_MF1_NT_LEVEL_DETECT,        before_reader_run,           cmd_processor_detect_mf1_nt_level,           after_reader_run    },
-    {    DATA_CMD_MF1_DARKSIDE_DETECT,        before_reader_run,           cmd_processor_detect_mf1_darkside,           after_reader_run    },
 
     {    DATA_CMD_MF1_DARKSIDE_ACQUIRE,       before_reader_run,           cmd_processor_mf1_darkside_acquire,          after_reader_run    },
     {    DATA_CMD_MF1_NT_DIST_DETECT,         before_reader_run,           cmd_processor_mf1_nt_distance,               after_reader_run    },
@@ -370,8 +389,6 @@ static cmd_data_map_t m_data_cmd_map[] = {
     {    DATA_CMD_WRITE_EM410X_TO_T5577,      before_lf_reader,                        cmd_processor_write_em410x_2_t57,            NULL                },
     
     {    DATA_CMD_SET_SLOT_ACTIVATED,         NULL,                        cmd_processor_set_slot_activated,            NULL                },
-    {    DATA_CMD_SET_SLOT_TAG_TYPE,          NULL,                        cmd_processor_set_slot_tag_type,             NULL                },
-    {    DATA_CMD_SET_SLOT_DATA_DEFAULT,      NULL,                        cmd_processor_set_slot_data_default,         NULL                },
     
 };
 

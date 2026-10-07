@@ -58,7 +58,7 @@ class Client:
             body=self.exact(length+1,deadline)
             if sum(body)&255: continue
             if cmd != command: continue
-            if status != success: raise RuntimeError(f'command {cmd}: {ERRORS.get(status, f"device status 0x{status:04x}")}')
+            if status not in (success if isinstance(success, tuple) else (success,)): raise RuntimeError(f'command {cmd}: {ERRORS.get(status, f"device status 0x{status:04x}")}')
             return body[:-1]
     def config(self):
         data=self.request(1108)
@@ -73,9 +73,9 @@ class Client:
         raise TimeoutError('slot change remains pending; move away from the reader field')
 
     def request_mode(self, mode):
-        data=self.request(1002,success=0)
+        data=self.request(1002,success=(0,0x68))
         if len(data)!=1 or data[0]>1: raise ValueError('invalid device mode response')
-        self.request(1001,bytes([mode]),success=0)
+        self.request(1001,bytes([mode]),success=(0,0x68))
         return data[0]
 
 def parser():

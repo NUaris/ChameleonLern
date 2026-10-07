@@ -6,7 +6,7 @@ ChameleonLern 是基于官方 [ChameleonUltra](https://github.com/RfidResearchGr
 
 **已实现第一版设备端混合学习与自动选卡，并提供量产 Chameleon Ultra 的签名 DFU 应用包。** 默认关闭自动选卡，建议先使用观察模式收集反馈。评分表示特征相似程度，不能当作准确率或开门成功率。
 
-运行官方固件的 Ultra 可以通过现有官方引导程序安装 `ultra-dfu-app.zip`，无需更换引导程序。先备份卡片，再使用支持本地 ZIP 的 DFU 工具；官方默认升级源仍只提供官方固件。安装步骤见 [FLASHING.md](docs/FLASHING.md)。**不要将 `v0.1.0-alpha.1` 的旧原型引脚应用刷入量产 Ultra；使用 `v0.1.0-alpha.2` 或后续版本。** 本项目卡片格式与现行官方不同，需要重新导入，日常管理使用本项目 CLI。
+运行官方固件的 Ultra 可以通过现有官方引导程序安装 `ultra-dfu-app.zip`，无需更换引导程序。先备份卡片，再使用支持本地 ZIP 的 DFU 工具；官方默认升级源仍只提供官方固件。安装步骤见 [FLASHING.md](docs/FLASHING.md)。**不要将 `v0.1.0-alpha.1` 的旧原型引脚应用刷入量产 Ultra；使用 `v0.1.0-alpha.2` 或后续版本。** 本项目卡片格式与现行官方不同，需要重新导入，alpha.3 起提供官方 GUI 的基础卡槽／MF1／EM410X 管理兼容层；学习配置仍使用本项目 CLI。
 
 ## 官方来源与维护方式
 
